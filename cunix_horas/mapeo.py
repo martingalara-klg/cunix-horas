@@ -81,9 +81,9 @@ class Mapeo:
             raise ErrorMapeo(
                 f"Proyecto sin mapear en {archivo}: [{codigo}] {alias}\n"
                 f"  Agregá a config/mapeo.yaml, bajo proyectos:\n"
-                f"    {codigo}:\n"
-                f'      cliente: "AJUSTAR - nombre del cliente para el partner"\n'
-                f'      proyecto: "{alias}"'
+                f"  {codigo}:\n"
+                f'    cliente: "AJUSTAR - nombre del cliente para el partner"\n'
+                f'    proyecto: "{alias}"'
             )
         return destino
 
@@ -93,8 +93,8 @@ class Mapeo:
             raise ErrorMapeo(
                 f"Desarrollador sin mapear en {archivo}: {username}\n"
                 f"  Agregá a config/mapeo.yaml, bajo personas:\n"
-                f"    {username}:\n"
-                f'      nombre: "AJUSTAR - nombre completo, va en A1 del Excel"\n'
-                f'      archivo: "AJUSTAR - apellido, va en el nombre del archivo"'
+                f"  {username}:\n"
+                f'    nombre: "AJUSTAR - nombre completo, va en A1 del Excel"\n'
+                f'    archivo: "AJUSTAR - apellido, va en el nombre del archivo"'
             )
         return persona
