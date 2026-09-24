@@ -1,0 +1,22 @@
+# Mapeo de Kimai al Excel que recibe el partner.
+#
+# personas:  clave = username de Kimai (columna F del export)
+# proyectos: clave = código entre corchetes del campo Project (columna J)
+#
+# Si aparece un código nuevo, el proceso frena y te sugiere la línea a pegar.
+
+personas:
+  mzalazar:
+    nombre: "Matias Zalazar"
+    archivo: "Zalazar"
+
+proyectos:
+  CO2610170:
+    cliente: "Servicio Nacional de Aduanas"
+    proyecto: "Subastas"
+  CO2510115:
+    cliente: "Instituto de Salud Pública de Chile"
+    proyecto: "SIAC-OIRS"
+  PR2510126:
+    cliente: "MINVU"
+    proyecto: "SELICO"

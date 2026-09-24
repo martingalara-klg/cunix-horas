@@ -1,0 +1,15 @@
+personas:
+  mzalazar:
+    nombre: "Matias Zalazar"
+    archivo: "Zalazar"
+
+proyectos:
+  CO2610170:
+    cliente: "Servicio Nacional de Aduanas"
+    proyecto: "Subastas"
+  CO2510115:
+    cliente: "Instituto de Salud Pública de Chile"
+    proyecto: "SIAC-OIRS"
+  PR2510126:
+    cliente: "MINVU"
+    proyecto: "SELICO"
