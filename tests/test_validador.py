@@ -59,3 +59,12 @@ def test_avisa_por_registros_descartados():
 
 def test_no_hay_falsos_positivos_de_descuadre():
     assert not any("Descuadre" in a for a in validar(reporte(dias_habiles_completos())))
+
+
+def test_avisa_por_descuadre_de_horas():
+    # Horas en un día fuera del rango del mes (día 32 no existe en octubre)
+    # Esto causa que el total de la fila (8.0) no coincida con la suma de días válidos (0)
+    horas = {32: 8.0}
+    avisos = validar(reporte(horas))
+    assert any("Descuadre de horas" in a and "8.00" in a and "0.00" in a for a in avisos)
+    assert any("No envíes este Excel" in a for a in avisos)

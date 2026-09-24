@@ -45,8 +45,9 @@ def validar(reporte: Reporte) -> list[str]:
     )
     if abs(suma_por_dia - reporte.total) > TOLERANCIA:
         avisos.append(
-            f"Descuadre interno: el total del mes es {reporte.total:.2f} h pero la "
-            f"suma de los días da {suma_por_dia:.2f} h. Revisar el código."
+            f"Descuadre de horas: el total del mes es {reporte.total:.2f} h pero la "
+            f"suma de los días da {suma_por_dia:.2f} h. No envíes este Excel y reportá "
+            f"el problema al equipo que mantiene la herramienta."
         )
 
     return avisos
