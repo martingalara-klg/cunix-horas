@@ -158,14 +158,14 @@ Todas las estructuras son inmutables; cada etapa devuelve un valor nuevo.
 
 **Frena (no se genera Excel para ese desarrollador):**
 
-- Código de proyecto presente en el export pero ausente de `proyectos:`. El mensaje incluye la línea YAML lista para pegar:
+- Código de proyecto presente en el export pero ausente de `proyectos:`. El mensaje incluye la línea YAML lista para pegar. El sangrado del bloque sugerido debe coincidir con el del archivo — 2 espacios para la clave, 4 para los campos: con 4 y 6, el bloque pegado queda anidado dentro de la entrada anterior, el YAML sigue siendo válido, la validación no lo detecta, y el mapeo se pierde en silencio. Hay tests de round-trip que lo cubren.
 
   ```
   Proyecto sin mapear en kimai-mzalazar.xlsx: [PR2610199] MINVU-Portal2
     Agregá a config/mapeo.yaml, bajo proyectos:
-      PR2610199:
-        cliente: "Subsecretaría del Ministerio de Vivienda y Urbanismo de Chile"
-        proyecto: "MINVU-Portal2"   # ajustá el nombre para el partner
+    PR2610199:
+      cliente: "Subsecretaría del Ministerio de Vivienda y Urbanismo de Chile"
+      proyecto: "MINVU-Portal2"   # ajustá el nombre para el partner
   ```
 
 - `username` presente en el export pero ausente de `personas:` (mismo tratamiento).
