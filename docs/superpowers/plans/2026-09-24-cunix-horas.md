@@ -15,7 +15,7 @@
 - El paquete vive en `cunix_horas/` en la raíz del proyecto, **no** bajo `src/`. Motivo: `python -m cunix_horas` debe funcionar sin `pip install -e .`, porque se invoca desde un `.bat` de doble clic.
 - **Nunca** usar `openpyxl.load_workbook()` sobre un archivo de input de Kimai. Falla con `TypeError: SheetView.__init__() got an unexpected keyword argument 'showZeroes'`. El input se lee con `zipfile` + `xml.etree.ElementTree`.
 - Namespace OOXML en todo el parseo: `{http://schemas.openxmlformats.org/spreadsheetml/2006/main}`.
-- Época de los seriales de fecha de Excel: `date(1899, 12, 30)`. `46262.5` → `2026-08-31`.
+- Época de los seriales de fecha de Excel: `date(1899, 12, 30)`. `46265.708333333` → `2026-08-31`.
 - La duración de Kimai es fracción de día: horas = `Duration * 24`.
 - Las horas se redondean a 2 decimales **sólo al escribir la celda**, nunca durante la acumulación.
 - Todos los `dataclass` son `frozen=True`. Ninguna función muta sus argumentos.
@@ -198,8 +198,8 @@ from cunix_horas.lector_kimai import (
 
 
 def test_serial_a_fecha_convierte_el_serial_de_excel():
-    assert serial_a_fecha("46262.5") == date(2026, 8, 31)
-    assert serial_a_fecha(46240.333333333) == date(2026, 8, 9)
+    assert serial_a_fecha("46265.708333333") == date(2026, 8, 31)
+    assert serial_a_fecha(46243.333333333) == date(2026, 8, 9)
 
 
 def test_codigo_de_proyecto_extrae_lo_que_esta_entre_corchetes():
@@ -335,7 +335,7 @@ class Registro:
 
 
 def serial_a_fecha(serial: str | float) -> date:
-    """Convierte un serial de fecha de Excel a date. 46262.5 -> 2026-08-31."""
+    """Convierte un serial de fecha de Excel a date. 46265.708333333 -> 2026-08-31."""
     return EPOCA_EXCEL + timedelta(days=float(serial))
 
 

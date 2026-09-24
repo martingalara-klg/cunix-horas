@@ -23,7 +23,7 @@ Export plano de registros de tiempo ("timesheet"), un archivo por desarrollador 
 
 | Col | Campo | Ejemplo | Uso |
 |-----|-------|---------|-----|
-| A | Date | `46262.5` | Serial Excel, base 1899-12-30 → día del mes |
+| A | Date | `46265.708333333` | Serial Excel, base 1899-12-30 → día del mes |
 | D | Duration | `0.14583333` | Fracción de día; × 24 = horas |
 | E | User | `Matias Zalazar` | Informativo |
 | F | User (username) | `mzalazar` | **Clave** de `personas:` en el mapeo |
