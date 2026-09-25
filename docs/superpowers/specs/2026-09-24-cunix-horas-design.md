@@ -183,7 +183,11 @@ El fallo de un archivo **no impide** procesar los demás: cada input es independ
 
 ## Precisión numérica
 
-Las horas se acumulan como `float` sin redondear y se redondean a 2 decimales **sólo al escribir la celda**. Redondear antes haría que los totales por fila y por día no cierren con el total general.
+Las horas se acumulan como `float` sin redondear y se redondean a 2 decimales **una sola vez: en la celda de día de la fila de actividad**, que es el dato de base. Todos los demás valores que se muestran —total de la actividad, celdas y total del proyecto, total del cliente, fila `Total` y totales por día— se derivan **sumando valores ya redondeados**.
+
+Este criterio reemplaza al anterior ("acumular sin redondear y redondear sólo al escribir"). Aquel suponía que redondear tarde garantizaba consistencia, y no la garantiza: cada celda se redondeaba por separado sobre una agregación distinta, así que con tercios de hora (20/40/50 minutos, muy comunes en Kimai) una fila mostraba `0.33` cinco veces y declaraba `1.67` de total. El total general era exacto, pero el Excel no cerraba a la vista y el cliente que suma una fila no obtenía el número declarado.
+
+El precio del criterio nuevo es que el total general puede apartarse unos centésimos de las horas reales. Es la elección correcta para un documento que el cliente lee y suma. El aviso de "Descuadre de horas" del validador compara los valores **redondeados**, los mismos que el cliente ve, y no los internos: comparándolos sin redondear la verificación era estructuralmente ciega al riesgo que decía cubrir.
 
 ## Uso
 

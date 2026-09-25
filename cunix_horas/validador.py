@@ -40,12 +40,18 @@ def validar(reporte: Reporte) -> list[str]:
         if not es_fin_de_semana and horas == 0:
             avisos.append(f"Día hábil sin carga: {legible}")
 
+    # Comparación sobre los valores REDONDEADOS, que son los que el cliente ve
+    # y suma en el Excel. Compararlos sin redondear dejaba la verificación
+    # ciega justo al riesgo que tiene que cubrir: un Excel cuyas filas no
+    # cierran a la vista aunque el total interno sea exacto.
+    total_mostrado = reporte.total_redondeado
     suma_por_dia = sum(
-        reporte.total_del_dia(d) for d in range(1, reporte.dias_del_mes + 1)
+        reporte.total_redondeado_del_dia(d)
+        for d in range(1, reporte.dias_del_mes + 1)
     )
-    if abs(suma_por_dia - reporte.total) > TOLERANCIA:
+    if abs(suma_por_dia - total_mostrado) > TOLERANCIA:
         avisos.append(
-            f"Descuadre de horas: el total del mes es {reporte.total:.2f} h pero la "
+            f"Descuadre de horas: el total del mes es {total_mostrado:.2f} h pero la "
             f"suma de los días da {suma_por_dia:.2f} h. No envíes este Excel y reportá "
             f"el problema al equipo que mantiene la herramienta."
         )

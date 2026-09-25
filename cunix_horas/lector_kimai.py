@@ -53,7 +53,7 @@ class Registro:
 
 
 def serial_a_fecha(serial: str | float) -> date:
-    """Convierte un serial de fecha de Excel a date. 46262.5 -> 2026-08-31."""
+    """Convierte un serial de fecha de Excel a date. 46265.708333333 -> 2026-08-31."""
     return EPOCA_EXCEL + timedelta(days=float(serial))
 
 
@@ -84,15 +84,20 @@ def _cadenas_compartidas(archivo: zipfile.ZipFile) -> list[str]:
     ]
 
 
-def _filas(archivo: zipfile.ZipFile) -> list[dict[str, str]]:
-    """Devuelve cada fila como {letra_de_columna: valor}, saltando las vacías."""
+def _filas(archivo: zipfile.ZipFile) -> list[tuple[int, dict[str, str]]]:
+    """Devuelve cada fila como (nro_de_fila_en_el_Excel, {letra: valor}).
+
+    El número de fila es el del .xlsx, no el del índice en la lista: las filas
+    vacías se saltan, y el número tiene que servirle al dueño para abrir el
+    archivo y mirar esa fila.
+    """
     hojas = [n for n in archivo.namelist() if n.startswith("xl/worksheets/sheet")]
     if not hojas:
         raise ErrorLectura("El archivo no tiene ninguna hoja de cálculo")
     compartidas = _cadenas_compartidas(archivo)
     raiz = ET.fromstring(archivo.read(sorted(hojas)[0]))
 
-    filas: list[dict[str, str]] = []
+    filas: list[tuple[int, dict[str, str]]] = []
     for elemento in raiz.iter(f"{NS}row"):
         fila: dict[str, str] = {}
         for celda in elemento:
@@ -111,7 +116,8 @@ def _filas(archivo: zipfile.ZipFile) -> list[dict[str, str]]:
                     t.text or "" for t in valor_inline.iter(f"{NS}t")
                 )
         if fila:
-            filas.append(fila)
+            nro = int(elemento.get("r") or len(filas) + 1)
+            filas.append((nro, fila))
     return filas
 
 
@@ -128,6 +134,34 @@ def _verificar_encabezados(encabezado: dict[str, str], ruta: Path) -> None:
         )
 
 
+def _fecha_de(valor: str, nro_fila: int, ruta: Path) -> date:
+    """Fecha de una fila, o ErrorLectura en español si la celda no es una fecha."""
+    try:
+        return serial_a_fecha(valor)
+    except (ValueError, TypeError, OverflowError):
+        raise ErrorLectura(
+            f"{ruta.name}, fila {nro_fila}, columna {COL_FECHA} "
+            f"({ENCABEZADOS_ESPERADOS[COL_FECHA]}): {valor!r} no es una fecha "
+            f"que Excel pueda interpretar.\n"
+            f"  Exportá de nuevo desde Kimai sin editar el archivo a mano: la "
+            f"columna {COL_FECHA} tiene que quedar con formato de fecha."
+        ) from None
+
+
+def _horas_de(valor: str | float, nro_fila: int, ruta: Path) -> float:
+    """Duración de una fila, o ErrorLectura en español si la celda no es un número."""
+    try:
+        return float(valor)
+    except (ValueError, TypeError):
+        raise ErrorLectura(
+            f"{ruta.name}, fila {nro_fila}, columna {COL_DURACION} "
+            f"({ENCABEZADOS_ESPERADOS[COL_DURACION]}): {valor!r} no es una "
+            f"duración numérica.\n"
+            f"  Exportá de nuevo desde Kimai sin editar el archivo a mano: la "
+            f"columna {COL_DURACION} tiene que quedar con formato de hora."
+        ) from None
+
+
 def leer(ruta: Path) -> list[Registro]:
     """Lee un export de Kimai y devuelve sus registros de tiempo."""
     if not zipfile.is_zipfile(ruta):
@@ -139,17 +173,17 @@ def leer(ruta: Path) -> list[Registro]:
     if not filas:
         raise ErrorLectura(f"{ruta.name} está vacío")
 
-    _verificar_encabezados(filas[0], ruta)
+    _verificar_encabezados(filas[0][1], ruta)
 
     registros: list[Registro] = []
-    for fila in filas[1:]:
+    for nro_fila, fila in filas[1:]:
         if COL_FECHA not in fila:
             continue
         texto_proyecto = fila.get(COL_PROYECTO, "")
         registros.append(
             Registro(
-                fecha=serial_a_fecha(fila[COL_FECHA]),
-                horas=float(fila.get(COL_DURACION, 0)) * 24,
+                fecha=_fecha_de(fila[COL_FECHA], nro_fila, ruta),
+                horas=_horas_de(fila.get(COL_DURACION, 0), nro_fila, ruta) * 24,
                 username=fila.get(COL_USERNAME, ""),
                 cod_proyecto=codigo_de_proyecto(texto_proyecto),
                 actividad=fila.get(COL_ACTIVIDAD, ""),

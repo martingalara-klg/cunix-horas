@@ -95,3 +95,70 @@ def test_leer_falla_si_faltan_las_columnas_esperadas(tmp_path):
         z.writestr("xl/worksheets/sheet1.xml", hoja)
     with pytest.raises(ErrorLectura, match="no tiene el formato"):
         leer(ruta)
+
+
+# --- Regresión: un valor no numérico no debe llegar como ValueError crudo ---
+# (el dueño leía "could not convert string to float: '2026-08-31'" y no sabía
+# qué archivo, qué fila ni qué columna mirar.)
+
+import zipfile
+
+NS_HOJA = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+ENCABEZADOS = {"A": "Date", "D": "Duration", "F": "User", "J": "Project", "K": "Activity"}
+
+
+def _xlsx_de_kimai(ruta, filas_de_datos):
+    """Arma un .xlsx mínimo con el formato de export de Kimai (inline strings)."""
+
+    def fila_xml(nro, celdas):
+        cel = "".join(
+            f'<c r="{col}{nro}" t="inlineStr"><is><t>{texto}</t></is></c>'
+            for col, texto in sorted(celdas.items())
+        )
+        return f'<row r="{nro}">{cel}</row>'
+
+    filas = [fila_xml(1, ENCABEZADOS)]
+    filas += [fila_xml(n, celdas) for n, celdas in enumerate(filas_de_datos, start=2)]
+    hoja = (
+        f'<?xml version="1.0"?><worksheet xmlns="{NS_HOJA}">'
+        f'<sheetData>{"".join(filas)}</sheetData></worksheet>'
+    )
+    with zipfile.ZipFile(ruta, "w") as archivo:
+        archivo.writestr("xl/worksheets/sheet1.xml", hoja)
+    return ruta
+
+
+def _fila(fecha="46265.708333333", duracion="0.0416666666", usuario="mzalazar"):
+    return {
+        "A": fecha,
+        "D": duracion,
+        "F": usuario,
+        "J": "[CO2610170] Subastas | largo",
+        "K": "Desarrollo",
+    }
+
+
+def test_una_fecha_no_numerica_da_un_error_en_espanol(tmp_path):
+    ruta = _xlsx_de_kimai(tmp_path / "kimai.xlsx", [_fila(fecha="2026-08-31")])
+    with pytest.raises(ErrorLectura) as excepcion:
+        leer(ruta)
+    mensaje = str(excepcion.value)
+    assert "kimai.xlsx" in mensaje
+    assert "fila 2" in mensaje
+    assert "columna A" in mensaje
+    assert "no es una fecha" in mensaje
+
+
+def test_una_duracion_no_numerica_da_un_error_en_espanol(tmp_path):
+    ruta = _xlsx_de_kimai(tmp_path / "kimai.xlsx", [_fila(), _fila(duracion="8 hs")])
+    with pytest.raises(ErrorLectura) as excepcion:
+        leer(ruta)
+    mensaje = str(excepcion.value)
+    assert "fila 3" in mensaje
+    assert "columna D" in mensaje
+    assert "no es una duración numérica" in mensaje
+
+
+def test_un_export_sin_filas_de_datos_se_lee_como_lista_vacia(tmp_path):
+    """El lector no opina: es agregar() quien frena el export vacío."""
+    assert leer(_xlsx_de_kimai(tmp_path / "kimai.xlsx", [])) == []

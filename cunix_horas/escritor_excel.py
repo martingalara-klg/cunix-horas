@@ -9,6 +9,12 @@ nombre va en negrita pero su total no, y los días con horas van en negrita
 mientras que los días sin horas no. Por eso el estilo se modela por tipo de
 fila Y por tipo de columna (etiqueta, total, día-con-valor, día-sin-valor),
 tomando cada modelo de la plantilla.
+
+Las horas se redondean una sola vez, en la celda de día de la fila de
+actividad. Todos los demás valores que se muestran (total de la actividad,
+celdas y total del proyecto, total del cliente, fila Total y totales por
+día) se derivan sumando valores ya redondeados, para que el Excel cierre a
+la vista de quien suma una fila o una columna.
 """
 from __future__ import annotations
 
@@ -20,7 +26,7 @@ from openpyxl.cell.cell import Cell
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
-from cunix_horas.agregador import Reporte
+from cunix_horas.agregador import DECIMALES, Reporte
 
 # Nunca strftime("%b"): depende del locale de la máquina.
 MESES_ABREVIADOS = {
@@ -181,12 +187,51 @@ def _escribir_fila(
         _aplicar(celda, estilo_fila, columna, tiene_valor)
 
 
+def _suma_mostrada(valores) -> float:
+    """Suma valores ya redondeados y limpia el ruido binario del float."""
+    return round(sum(valores), DECIMALES)
+
+
+def _agrupaciones(reporte: Reporte) -> tuple[dict, dict, dict]:
+    """Totales por cliente y por proyecto, derivados de las celdas de día.
+
+    Se calculan en una sola pasada, sumando los valores YA redondeados de las
+    filas de actividad: así el total de un proyecto es exactamente la suma de
+    sus celdas de día, y el de un cliente la suma de sus proyectos.
+    """
+    totales_cliente: dict[str, float] = {}
+    totales_proyecto: dict[tuple[str, str], float] = {}
+    dias_proyecto: dict[tuple[str, str], dict[int, float]] = {}
+
+    for fila in reporte.filas:
+        clave = (fila.cliente, fila.proyecto)
+        total_fila = fila.total_redondeado
+        totales_cliente[fila.cliente] = _suma_mostrada(
+            (totales_cliente.get(fila.cliente, 0.0), total_fila)
+        )
+        totales_proyecto[clave] = _suma_mostrada(
+            (totales_proyecto.get(clave, 0.0), total_fila)
+        )
+        dias = dias_proyecto.setdefault(clave, {})
+        for dia, horas in fila.horas_por_dia_redondeadas.items():
+            dias[dia] = _suma_mostrada((dias.get(dia, 0.0), horas))
+
+    return totales_cliente, totales_proyecto, dias_proyecto
+
+
 def escribir(reporte: Reporte, plantilla: Path, destino: Path) -> Path:
-    """Escribe el Excel del reporte en `destino` y devuelve esa ruta."""
+    """Escribe el Excel del reporte en `destino` y devuelve esa ruta.
+
+    Espera que `reporte.filas` venga agrupada contiguamente por cliente y por
+    proyecto. Si no lo está, falla: emitir dos bloques del mismo cliente daría
+    un Excel donde cada bloque declara el total completo y la columna B suma de
+    más, sin ninguna señal de que algo anda mal.
+    """
     estilos = _estilos_de(plantilla)
     dias = reporte.dias_del_mes
     ancho = _columna_del_dia(dias)
     ultima_letra = get_column_letter(ancho)
+    totales_cliente, totales_proyecto, dias_proyecto = _agrupaciones(reporte)
 
     libro = openpyxl.Workbook()
     hoja = libro.active
@@ -201,16 +246,22 @@ def escribir(reporte: Reporte, plantilla: Path, destino: Path) -> Path:
     nro_fila = 2
     cliente_actual: str | None = None
     proyecto_actual: tuple[str, str] | None = None
+    clientes_emitidos: set[str] = set()
+    proyectos_emitidos: set[tuple[str, str]] = set()
 
     for fila in reporte.filas:
         if fila.cliente != cliente_actual:
-            total_cliente = sum(
-                f.total for f in reporte.filas if f.cliente == fila.cliente
-            )
+            if fila.cliente in clientes_emitidos:
+                raise ValueError(
+                    f"Las filas no vienen agrupadas por cliente: '{fila.cliente}' "
+                    "vuelve a aparecer después de otro cliente. El Excel saldría "
+                    "con dos bloques del mismo cliente, cada uno declarando el "
+                    "total completo, y la columna B sumaría de más."
+                )
             _escribir_fila(
                 hoja,
                 nro_fila,
-                {1: fila.cliente, 2: round(total_cliente, 2)},
+                {1: fila.cliente, 2: totales_cliente[fila.cliente]},
                 estilos["cliente"],
                 ancho,
             )
@@ -218,38 +269,42 @@ def escribir(reporte: Reporte, plantilla: Path, destino: Path) -> Path:
                 f"{get_column_letter(PRIMERA_COLUMNA_DE_DIA)}{nro_fila}:"
                 f"{ultima_letra}{nro_fila}"
             )
+            clientes_emitidos.add(fila.cliente)
             cliente_actual = fila.cliente
             proyecto_actual = None
             nro_fila += 1
 
-        if (fila.cliente, fila.proyecto) != proyecto_actual:
-            hermanas = [
-                f
-                for f in reporte.filas
-                if (f.cliente, f.proyecto) == (fila.cliente, fila.proyecto)
-            ]
+        clave = (fila.cliente, fila.proyecto)
+        if clave != proyecto_actual:
+            if clave in proyectos_emitidos:
+                raise ValueError(
+                    f"Las filas no vienen agrupadas por proyecto: '{fila.proyecto}' "
+                    f"del cliente '{fila.cliente}' vuelve a aparecer después de otro "
+                    "proyecto. El Excel saldría con dos bloques del mismo proyecto, "
+                    "cada uno declarando el total completo."
+                )
             valores: dict[int, object] = {
                 1: fila.proyecto,
-                2: round(sum(f.total for f in hermanas), 2),
+                2: totales_proyecto[clave],
             }
-            for dia in range(1, dias + 1):
-                horas = sum(f.horas_por_dia.get(dia, 0.0) for f in hermanas)
+            for dia, horas in sorted(dias_proyecto[clave].items()):
                 if horas:
-                    valores[_columna_del_dia(dia)] = round(horas, 2)
+                    valores[_columna_del_dia(dia)] = horas
             _escribir_fila(hoja, nro_fila, valores, estilos["proyecto"], ancho)
-            proyecto_actual = (fila.cliente, fila.proyecto)
+            proyectos_emitidos.add(clave)
+            proyecto_actual = clave
             nro_fila += 1
 
-        valores = {1: fila.actividad, 2: round(fila.total, 2)}
-        for dia, horas in fila.horas_por_dia.items():
-            valores[_columna_del_dia(dia)] = round(horas, 2)
+        valores = {1: fila.actividad, 2: fila.total_redondeado}
+        for dia, horas in fila.horas_por_dia_redondeadas.items():
+            valores[_columna_del_dia(dia)] = horas
         _escribir_fila(hoja, nro_fila, valores, estilos["actividad"], ancho)
         nro_fila += 1
 
     # Fila Total: con 0.0 explícito en los días sin horas, como en la plantilla.
-    totales: dict[int, object] = {1: "Total", 2: round(reporte.total, 2)}
+    totales: dict[int, object] = {1: "Total", 2: reporte.total_redondeado}
     for dia in range(1, dias + 1):
-        totales[_columna_del_dia(dia)] = round(reporte.total_del_dia(dia), 2)
+        totales[_columna_del_dia(dia)] = reporte.total_redondeado_del_dia(dia)
     _escribir_fila(hoja, nro_fila, totales, estilos["total"], ancho)
 
     for letra, ancho_columna in estilos["_anchos"].items():

@@ -171,3 +171,116 @@ def test_un_excel_abierto_no_frena_a_los_demas(tmp_path, capsys, monkeypatch):
     assert "abierto" in salida.lower()
     # El segundo archivo (mismo nombre de salida) sí se generó.
     assert (raiz / "output" / "2026-08" / "Aug Zalazar.xlsx").is_file()
+
+
+# --- Regresión: después de una corrida fallida, output/ no puede mentir ---
+# (defecto Critical: quedaba el Excel de la corrida anterior, con nombre y
+# aspecto legítimos, y _validacion.txt se sobrescribía con "Sin avisos.".
+# El README declara ese archivo como lo único autoritativo antes de enviar.)
+
+MAPEO_SIN_UN_PROYECTO = (
+    "personas:\n"
+    "  mzalazar:\n"
+    '    nombre: "Matias Zalazar"\n'
+    '    archivo: "Zalazar"\n'
+    "proyectos:\n"
+    "  CO2610170:\n"
+    '    cliente: "Aduanas"\n'
+    '    proyecto: "Subastas"\n'
+)
+
+
+def corrida_fallida_despues_de_una_exitosa(tmp_path):
+    """Corrida 1 OK; aparece un proyecto sin mapear; corrida 2 falla."""
+    raiz = preparar(tmp_path)
+    assert procesar_mes("2026-08", raiz) == 0
+    assert (raiz / "output" / "2026-08" / "Aug Zalazar.xlsx").is_file()
+
+    (raiz / "config" / "mapeo.yaml").write_text(
+        MAPEO_SIN_UN_PROYECTO, encoding="utf-8"
+    )
+    assert procesar_mes("2026-08", raiz) == 1
+    return raiz
+
+
+def test_una_corrida_fallida_no_deja_el_excel_de_la_anterior(tmp_path):
+    raiz = corrida_fallida_despues_de_una_exitosa(tmp_path)
+    salida = raiz / "output" / "2026-08"
+    assert not (salida / "Aug Zalazar.xlsx").exists()
+    assert list(salida.glob("*.xlsx")) == []
+
+
+def test_la_validacion_de_una_corrida_fallida_nombra_los_no_generados(tmp_path):
+    raiz = corrida_fallida_despues_de_una_exitosa(tmp_path)
+    texto = (raiz / "output" / "2026-08" / "_validacion.txt").read_text(
+        encoding="utf-8"
+    )
+    assert "Sin avisos." not in texto
+    assert "NO GENERADO" in texto
+    assert "kimai-mzalazar.xlsx" in texto
+    assert "CO2510115" in texto  # el motivo concreto, no sólo el nombre
+    assert "0 Excel generado/s" in texto
+
+
+def test_la_validacion_de_una_corrida_exitosa_empieza_con_el_resumen(tmp_path):
+    raiz = preparar(tmp_path)
+    procesar_mes("2026-08", raiz)
+    texto = (raiz / "output" / "2026-08" / "_validacion.txt").read_text(
+        encoding="utf-8"
+    )
+    assert texto.startswith("Corrida de output/2026-08/")
+    assert "1 Excel generado/s" in texto
+    assert "  - Aug Zalazar.xlsx" in texto
+    assert "0 archivo" not in texto  # sin errores, no se lista la sección
+
+
+def test_el_resumen_de_consola_cuenta_los_no_generados(tmp_path, capsys):
+    raiz = preparar(tmp_path)
+    (raiz / "input" / "2026-08" / "roto.xlsx").write_text("basura", encoding="utf-8")
+    procesar_mes("2026-08", raiz)
+    salida = capsys.readouterr().out
+    assert "1 archivo/s generado/s, 1 no generado/s" in salida
+
+
+def test_los_totales_del_excel_generado_cierran_fila_por_fila(tmp_path):
+    """Sobre el pipeline completo, no sólo sobre datos sintéticos."""
+    raiz = preparar(tmp_path)
+    procesar_mes("2026-08", raiz)
+    hoja = openpyxl.load_workbook(
+        raiz / "output" / "2026-08" / "Aug Zalazar.xlsx"
+    ).active
+
+    filas_cliente = {r.min_row for r in hoja.merged_cells.ranges}
+    for fila in range(2, hoja.max_row + 1):
+        if fila in filas_cliente:
+            continue
+        suma_dias = round(
+            sum(
+                hoja.cell(row=fila, column=col).value or 0.0
+                for col in range(3, hoja.max_column + 1)
+            ),
+            2,
+        )
+        assert suma_dias == hoja.cell(row=fila, column=2).value, (
+            f"fila {fila} ({hoja.cell(row=fila, column=1).value})"
+        )
+
+
+def test_un_export_con_dos_devs_no_genera_y_queda_en_la_validacion(tmp_path):
+    """Camino completo del defecto Critical: Kimai exportado sin filtrar."""
+    from test_lector_kimai import _fila, _xlsx_de_kimai
+
+    raiz = preparar(tmp_path, nombres=())
+    _xlsx_de_kimai(
+        raiz / "input" / "2026-08" / "kimai-mezclado.xlsx",
+        [_fila(usuario="mzalazar"), _fila(usuario="zlopez")],
+    )
+    assert procesar_mes("2026-08", raiz) == 1
+    assert list((raiz / "output" / "2026-08").glob("*.xlsx")) == []
+
+    texto = (raiz / "output" / "2026-08" / "_validacion.txt").read_text(
+        encoding="utf-8"
+    )
+    assert "kimai-mezclado.xlsx" in texto
+    assert "mzalazar" in texto and "zlopez" in texto
+    assert "un solo desarrollador" in texto

@@ -3,7 +3,7 @@ from datetime import date
 import pytest
 from conftest import FIXTURES
 
-from cunix_horas.agregador import agregar
+from cunix_horas.agregador import Reporte, agregar
 from cunix_horas.lector_kimai import Registro, leer
 from cunix_horas.mapeo import ErrorMapeo, Mapeo
 
@@ -93,10 +93,13 @@ def test_descarta_los_registros_fuera_del_mes():
 
 
 def test_dias_del_mes():
-    assert agregar([], mapeo(), 2026, 2, "x.xlsx").dias_del_mes == 28
-    assert agregar([], mapeo(), 2024, 2, "x.xlsx").dias_del_mes == 29
-    assert agregar([], mapeo(), 2025, 4, "x.xlsx").dias_del_mes == 30
-    assert agregar([], mapeo(), 2025, 10, "x.xlsx").dias_del_mes == 31
+    def dias(anio, mes):
+        return Reporte("X", "X", anio, mes, (), ()).dias_del_mes
+
+    assert dias(2026, 2) == 28
+    assert dias(2024, 2) == 29
+    assert dias(2025, 4) == 30
+    assert dias(2025, 10) == 31
 
 
 def test_toma_el_nombre_del_dev_del_mapeo():
@@ -141,3 +144,56 @@ def test_sobre_el_fixture_real_cierran_los_totales():
     suma_dias = sum(reporte.total_del_dia(d) for d in range(1, reporte.dias_del_mes + 1))
     assert round(suma_dias, 2) == 76.5
     assert {f.proyecto for f in reporte.filas} == {"Subastas", "SIAC-OIRS", "SELICO"}
+
+
+# --- Regresión: un export tiene que ser de un solo dev y tener datos ---
+# (defecto Critical: se tomaba el primer username alfabético y se le imputaban
+# las horas de todos; y un export sin filas generaba un "Aug .xlsx" de 0 h.)
+
+
+def test_un_export_con_dos_usernames_no_se_genera():
+    def reg_de(username, dia, horas):
+        return Registro(
+            fecha=date(2026, 8, dia),
+            horas=horas,
+            username=username,
+            cod_proyecto="CO2610170",
+            actividad="Desarrollo",
+        )
+
+    with pytest.raises(ErrorMapeo) as excepcion:
+        agregar(
+            [reg_de("aperez", 3, 8.0), reg_de("zlopez", 4, 8.0)],
+            mapeo(),
+            2026,
+            8,
+            "kimai-mezclado.xlsx",
+        )
+
+    mensaje = str(excepcion.value)
+    assert "kimai-mezclado.xlsx" in mensaje
+    assert "aperez" in mensaje and "zlopez" in mensaje
+    assert "un solo desarrollador" in mensaje
+
+
+def test_un_export_sin_filas_de_datos_no_se_genera():
+    with pytest.raises(ErrorMapeo) as excepcion:
+        agregar([], mapeo(), 2026, 8, "kimai-vacio.xlsx")
+
+    mensaje = str(excepcion.value)
+    assert "kimai-vacio.xlsx" in mensaje
+    assert "rango de fechas" in mensaje
+
+
+# --- Valores mostrados: se redondea una sola vez, en la celda de día ---
+
+
+def test_los_totales_mostrados_se_derivan_de_las_celdas_de_dia():
+    # 20 minutos = 1/3 h en cinco días: cada celda muestra 0.33, así que el
+    # total mostrado tiene que ser 1.65, no 1.67.
+    reporte = agregar(
+        [reg(dia, 1 / 3) for dia in range(3, 8)], mapeo(), 2026, 8, "x.xlsx"
+    )
+    assert reporte.filas[0].total_redondeado == 1.65
+    assert reporte.total_redondeado == 1.65
+    assert reporte.total_redondeado_del_dia(3) == 0.33
