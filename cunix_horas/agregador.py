@@ -6,7 +6,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 from cunix_horas.lector_kimai import Registro
-from cunix_horas.mapeo import ErrorMapeo, Mapeo
+from cunix_horas.mapeo import ErrorMapeo, Mapeo, Persona
 
 # Decimales con los que se muestra cada hora en el Excel del partner.
 DECIMALES = 2
@@ -111,6 +111,51 @@ def _verificar_export(registros: list[Registro], archivo: str) -> str:
     return usernames[0]
 
 
+def resolver_identidad(
+    registros: list[Registro], mapeo: Mapeo, archivo: str
+) -> Persona:
+    """Verifica el export y devuelve la persona a la que corresponde.
+
+    Es la primera parte de `agregar()`, expuesta aparte para que el CLI pueda
+    conocer el nombre del Excel de salida ANTES de intentar generarlo. Sin eso
+    no hay forma de saber qué archivo de `output/` va a ser reemplazado, y una
+    falla posterior (por ejemplo un proyecto sin mapear) dejaría el Excel de la
+    corrida anterior haciéndose pasar por el del mes.
+
+    Lanza ErrorMapeo si el export está vacío, mezcla desarrolladores, o el
+    username no está en mapeo.yaml.
+    """
+    username = _verificar_export(registros, archivo)
+    return mapeo.resolver_persona(username, archivo)
+
+
+def _verificar_hay_registros_del_mes(
+    del_mes: list[Registro], descartados: list[Registro], anio: int, mes: int,
+    archivo: str,
+) -> None:
+    """Falla si TODOS los registros del export quedaron fuera del mes.
+
+    El Excel saldría con 0.0 h y código de salida 0: un reporte en blanco, con
+    nombre y aspecto legítimos, que el dueño le manda al cliente sin que nada
+    le haya avisado. Es el mismo error de rango de fechas en Kimai que el
+    export vacío, por otro camino.
+    """
+    if del_mes or not descartados:
+        return
+    fechas = sorted(r.fecha for r in descartados)
+    primera, ultima = fechas[0], fechas[-1]
+    raise ErrorMapeo(
+        f"Ningún registro del export cae dentro de {anio}-{mes:02d} en {archivo}: "
+        f"los {len(descartados)} registros del archivo se descartaron por fecha.\n"
+        f"  Las fechas del export van del {primera.day}/{primera.month}/{primera.year} "
+        f"al {ultima.day}/{ultima.month}/{ultima.year}.\n"
+        f"  Lo más probable es que el export se haya hecho con otro rango de fechas, "
+        f"o que corresponda a otro mes del que estás generando.\n"
+        f"  Volvé a exportar {anio}-{mes:02d} desde Kimai, o generá el mes que "
+        f"realmente trae el archivo."
+    )
+
+
 def agregar(
     registros: list[Registro], mapeo: Mapeo, anio: int, mes: int, archivo: str
 ) -> Reporte:
@@ -118,10 +163,10 @@ def agregar(
 
     Los registros con fecha fuera del mes se excluyen y quedan en `descartados`.
     Lanza ErrorMapeo si aparece un código de proyecto o un username sin mapear,
-    si el export no tiene ningún registro, o si mezcla varios desarrolladores.
+    si el export no tiene ningún registro, si mezcla varios desarrolladores, o
+    si todos sus registros caen fuera del mes que se está generando.
     """
-    username = _verificar_export(registros, archivo)
-    persona = mapeo.resolver_persona(username, archivo)
+    persona = resolver_identidad(registros, mapeo, archivo)
 
     del_mes: list[Registro] = []
     descartados: list[Registro] = []
@@ -130,6 +175,8 @@ def agregar(
             del_mes.append(registro)
         else:
             descartados.append(registro)
+
+    _verificar_hay_registros_del_mes(del_mes, descartados, anio, mes, archivo)
 
     acumulado: dict[tuple[str, str, str], dict[int, float]] = defaultdict(dict)
     for registro in del_mes:

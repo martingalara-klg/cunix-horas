@@ -1,4 +1,6 @@
 import shutil
+import stat
+from pathlib import Path
 
 import openpyxl
 import yaml
@@ -204,10 +206,16 @@ def corrida_fallida_despues_de_una_exitosa(tmp_path):
 
 
 def test_una_corrida_fallida_no_deja_el_excel_de_la_anterior(tmp_path):
+    """Nada en output/ puede seguir aparentando ser el Excel del mes.
+
+    El Excel de la corrida anterior no se borra —el dato sigue disponible—
+    pero se lo aparta con un nombre que no se puede confundir con el del mes.
+    """
     raiz = corrida_fallida_despues_de_una_exitosa(tmp_path)
     salida = raiz / "output" / "2026-08"
     assert not (salida / "Aug Zalazar.xlsx").exists()
-    assert list(salida.glob("*.xlsx")) == []
+    quedaron = sorted(p.name for p in salida.glob("*.xlsx"))
+    assert quedaron == ["Aug Zalazar (CORRIDA ANTERIOR - NO ENVIAR).xlsx"]
 
 
 def test_la_validacion_de_una_corrida_fallida_nombra_los_no_generados(tmp_path):
@@ -284,3 +292,175 @@ def test_un_export_con_dos_devs_no_genera_y_queda_en_la_validacion(tmp_path):
     assert "kimai-mezclado.xlsx" in texto
     assert "mzalazar" in texto and "zlopez" in texto
     assert "un solo desarrollador" in texto
+
+
+# --- Regresión: el barrido de output/ dejaba la carpeta a medias ---
+# (defecto Critical: la corrida empezaba borrando todos los .xlsx de
+# output/<mes>/. Un solo Excel abierto abortaba la corrida entera con
+# `return 1` ANTES de reescribir _validacion.txt, así que el informe seguía
+# declarando Excel que ya no estaban. Y se llevaba puesto en silencio
+# cualquier .xlsx ajeno que el dueño hubiera dejado en la carpeta.)
+
+MAPEO_DOS_DEVS = (
+    "personas:\n"
+    "  mzalazar:\n"
+    '    nombre: "Matias Zalazar"\n'
+    '    archivo: "Zalazar"\n'
+    "  zlopez:\n"
+    '    nombre: "Zoe Lopez"\n'
+    '    archivo: "Lopez"\n'
+    "proyectos:\n"
+    "  CO2610170:\n"
+    '    cliente: "Aduanas"\n'
+    '    proyecto: "Subastas"\n'
+)
+
+
+def preparar_dos_devs(tmp_path):
+    """input/2026-08/ con un export de cada uno de dos desarrolladores."""
+    from test_lector_kimai import _fila, _xlsx_de_kimai
+
+    raiz = preparar(tmp_path, nombres=())
+    (raiz / "config" / "mapeo.yaml").write_text(MAPEO_DOS_DEVS, encoding="utf-8")
+    entrada = raiz / "input" / "2026-08"
+    _xlsx_de_kimai(entrada / "kimai-lopez.xlsx", [_fila(usuario="zlopez")])
+    _xlsx_de_kimai(entrada / "kimai-zalazar.xlsx", [_fila(usuario="mzalazar")])
+    return raiz
+
+
+def test_un_excel_no_reemplazable_no_aborta_la_corrida(tmp_path):
+    """El bloqueo de un destino es fallo de ESE archivo, no de la corrida."""
+    raiz = preparar_dos_devs(tmp_path)
+    salida = raiz / "output" / "2026-08"
+    assert procesar_mes("2026-08", raiz) == 0
+    assert (salida / "Aug Lopez.xlsx").is_file()
+    assert (salida / "Aug Zalazar.xlsx").is_file()
+
+    # Segunda corrida con uno de los dos destinos de sólo lectura: os.replace
+    # sobre él falla con PermissionError, igual que con el Excel abierto.
+    bloqueado = salida / "Aug Lopez.xlsx"
+    contenido_previo = bloqueado.read_bytes()
+    bloqueado.chmod(stat.S_IREAD)
+    try:
+        codigo = procesar_mes("2026-08", raiz)
+    finally:
+        for archivo in salida.glob("*.xlsx"):
+            archivo.chmod(stat.S_IWRITE | stat.S_IREAD)
+
+    assert codigo == 1
+    # El otro desarrollador se generó igual: la corrida no abortó.
+    assert (salida / "Aug Zalazar.xlsx").is_file()
+    # El Excel bloqueado no se pisó a medias: se apartó entero, byte por byte.
+    apartado = salida / "Aug Lopez (CORRIDA ANTERIOR - NO ENVIAR).xlsx"
+    assert apartado.read_bytes() == contenido_previo
+
+    texto = (salida / "_validacion.txt").read_text(encoding="utf-8")
+    # El informe describe exactamente lo que quedó en la carpeta.
+    assert "1 Excel generado/s" in texto
+    assert "  - Aug Zalazar.xlsx" in texto
+    assert "kimai-lopez.xlsx" in texto
+    assert "NO GENERADO" in texto
+    en_carpeta = {p.name for p in salida.glob("*.xlsx")}
+    assert "Aug Zalazar.xlsx" in en_carpeta
+    assert "Aug Lopez.xlsx" not in en_carpeta
+
+
+def test_no_quedan_temporales_despues_de_una_corrida(tmp_path):
+    raiz = preparar(tmp_path)
+    procesar_mes("2026-08", raiz)
+    salida = raiz / "output" / "2026-08"
+    assert [p.name for p in salida.glob("~tmp-*")] == []
+
+
+def test_un_xlsx_ajeno_del_dueno_sobrevive_a_la_corrida(tmp_path):
+    """La herramienta sólo puede tocar el destino que ella misma genera.
+
+    El barrido por glob borraba en silencio cualquier .xlsx que el dueño
+    hubiera dejado en la carpeta del mes.
+    """
+    raiz = preparar(tmp_path)
+    salida = raiz / "output" / "2026-08"
+    salida.mkdir(parents=True, exist_ok=True)
+    ajeno = salida / "NOTAS DEL DUENO.xlsx"
+    ajeno.write_text("notas del dueño", encoding="utf-8")
+
+    assert procesar_mes("2026-08", raiz) == 0
+    assert ajeno.is_file()
+    assert ajeno.read_text(encoding="utf-8") == "notas del dueño"
+
+
+def test_un_xlsx_ajeno_sobrevive_tambien_a_una_corrida_fallida(tmp_path):
+    raiz = preparar(tmp_path)
+    salida = raiz / "output" / "2026-08"
+    salida.mkdir(parents=True, exist_ok=True)
+    ajeno = salida / "NOTAS DEL DUENO.xlsx"
+    ajeno.write_text("notas del dueño", encoding="utf-8")
+
+    (raiz / "config" / "mapeo.yaml").write_text(
+        MAPEO_SIN_UN_PROYECTO, encoding="utf-8"
+    )
+    assert procesar_mes("2026-08", raiz) == 1
+    assert ajeno.is_file()
+
+
+def test_la_validacion_nombra_el_excel_viejo_que_se_aparto(tmp_path):
+    """El informe tiene que decir qué pasó con el Excel de la corrida anterior."""
+    raiz = corrida_fallida_despues_de_una_exitosa(tmp_path)
+    texto = (raiz / "output" / "2026-08" / "_validacion.txt").read_text(
+        encoding="utf-8"
+    )
+    assert "CORRIDA ANTERIOR - NO ENVIAR" in texto
+
+
+def test_si_el_excel_viejo_no_se_puede_apartar_el_informe_lo_dice(
+    tmp_path, monkeypatch
+):
+    """Si ni siquiera se puede renombrar, sigue siendo fallo de ese archivo."""
+    raiz = preparar(tmp_path)
+    assert procesar_mes("2026-08", raiz) == 0
+
+    def rename_bloqueado(self, destino):
+        raise PermissionError(13, "Acceso denegado")
+
+    (raiz / "config" / "mapeo.yaml").write_text(
+        MAPEO_SIN_UN_PROYECTO, encoding="utf-8"
+    )
+    monkeypatch.setattr(Path, "rename", rename_bloqueado)
+    assert procesar_mes("2026-08", raiz) == 1
+
+    texto = (raiz / "output" / "2026-08" / "_validacion.txt").read_text(
+        encoding="utf-8"
+    )
+    assert "no se pudo apartar" in texto
+    assert "NO lo envíes" in texto
+
+
+def test_un_export_entero_fuera_del_mes_no_genera_un_excel_en_blanco(
+    tmp_path, capsys
+):
+    """Defecto: 0.0 h, código de salida 0 y ningún aviso.
+
+    Mismo disparador que el export vacío (el rango de fechas mal puesto en
+    Kimai) por otro camino: el export trae registros, pero todos caen fuera
+    del mes que se está generando. El dueño le mandaba al cliente un reporte
+    en blanco sin que nada le avisara.
+    """
+    raiz = preparar(tmp_path)
+    # El fixture es de agosto 2026; lo procesamos como septiembre.
+    septiembre = raiz / "input" / "2026-09"
+    septiembre.mkdir(parents=True)
+    shutil.copy(FIXTURES / "kimai-mzalazar.xlsx", septiembre / "kimai-mzalazar.xlsx")
+
+    assert procesar_mes("2026-09", raiz) == 1
+    salida = raiz / "output" / "2026-09"
+    assert list(salida.glob("*.xlsx")) == []
+
+    texto = (salida / "_validacion.txt").read_text(encoding="utf-8")
+    assert "NO GENERADO" in texto
+    assert "kimai-mzalazar.xlsx" in texto
+    assert "2026-09" in texto  # el mes que se pidió
+    assert "se descartaron por fecha" in texto
+    assert "/8/2026" in texto  # el rango de fechas que sí trae el export
+    assert "otro rango de fechas" in texto
+    assert "otro mes" in texto
+    assert "0.0 h" not in capsys.readouterr().out

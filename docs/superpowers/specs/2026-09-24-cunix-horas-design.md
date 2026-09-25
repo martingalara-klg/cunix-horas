@@ -187,7 +187,13 @@ Las horas se acumulan como `float` sin redondear y se redondean a 2 decimales **
 
 Este criterio reemplaza al anterior ("acumular sin redondear y redondear sólo al escribir"). Aquel suponía que redondear tarde garantizaba consistencia, y no la garantiza: cada celda se redondeaba por separado sobre una agregación distinta, así que con tercios de hora (20/40/50 minutos, muy comunes en Kimai) una fila mostraba `0.33` cinco veces y declaraba `1.67` de total. El total general era exacto, pero el Excel no cerraba a la vista y el cliente que suma una fila no obtenía el número declarado.
 
-El precio del criterio nuevo es que el total general puede apartarse unos centésimos de las horas reales. Es la elección correcta para un documento que el cliente lee y suma. El aviso de "Descuadre de horas" del validador compara los valores **redondeados**, los mismos que el cliente ve, y no los internos: comparándolos sin redondear la verificación era estructuralmente ciega al riesgo que decía cubrir.
+El precio del criterio nuevo es que el total general puede apartarse de las horas reales del export. **El desvío no es "unos centésimos": escala con la cantidad de celdas.** Cada celda de día se redondea por separado y aporta hasta `0.005 h` de error, así que la cota del total es aproximadamente `0.005 h x (celdas de día no vacías)`. Un mes de 154 h repartido en muchas celdas ya muestra `153.72` en el Excel: **0.28 h de desvío**. Con 200 celdas la cota sube a 1 h.
+
+Es igual la elección correcta para un documento que el cliente lee y suma —un Excel cuyas filas no cierran a la vista es peor que un total corrido—, pero el desvío tiene que quedar a la vista del dueño.
+
+De eso se ocupa el aviso **"Desvío por redondeo"** del validador: compara el total del Excel (la suma de los valores redondeados, lo que el cliente ve) contra las horas crudas del export, y avisa si la diferencia supera **0.5 h**. Ese umbral es el punto en que la diferencia empieza a ser discutible en una factura; por debajo es ruido de presentación que no vale la pena poner delante del dueño todos los meses. El mensaje dice cuántas horas de diferencia hay y aclara que es efecto del redondeo y no un error de carga, para que el dueño decida si le importa.
+
+El aviso anterior comparaba valores redondeados contra valores redondeados: la misma cuenta dos veces, una tautología que no podía dispararse nunca. La red de seguridad que esta sección declaraba no existía.
 
 ## Uso
 

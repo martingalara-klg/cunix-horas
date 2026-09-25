@@ -1,17 +1,22 @@
 """Orquestación: de input/<mes>/*.xlsx a output/<mes>/*.xlsx."""
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
 
-from cunix_horas.agregador import agregar
-from cunix_horas.escritor_excel import escribir, nombre_de_archivo
+from cunix_horas.agregador import Reporte, agregar, resolver_identidad
+from cunix_horas.escritor_excel import escribir, nombre_de_archivo_de
 from cunix_horas.lector_kimai import ErrorLectura, leer
 from cunix_horas.mapeo import ErrorMapeo, Mapeo
 from cunix_horas.validador import validar
 
 FORMATO_MES = re.compile(r"^(\d{4})-(\d{2})$")
+
+# Marca del Excel que quedó de una corrida anterior y que esta corrida no pudo
+# reemplazar. Va en el nombre para que sea imposible confundirlo con el del mes.
+SUFIJO_CORRIDA_ANTERIOR = " (CORRIDA ANTERIOR - NO ENVIAR)"
 
 
 def _reconfigurar_salida_utf8() -> None:
@@ -44,18 +49,63 @@ def _parsear_mes(mes: str) -> tuple[int, int]:
     return anio, numero
 
 
-def _limpiar_xlsx_previos(carpeta: Path) -> None:
-    """Saca de output/<mes>/ los .xlsx que dejó una corrida anterior.
+def _escribir_atomico(reporte: Reporte, plantilla: Path, destino: Path) -> None:
+    """Genera el Excel en un temporal y recién ahí lo mueve sobre `destino`.
 
-    Si no se limpian, una corrida que falla deja ahí el Excel de la corrida
-    previa: mismo nombre, aspecto legítimo, datos viejos o incompletos. El
-    dueño no tiene cómo distinguirlo del Excel del mes. Limpiando antes de
-    generar, output/ nunca queda con una mezcla de dos corridas.
+    `os.replace` es atómico y pisa el destino existente, así que nunca hay una
+    ventana en la que `destino` sea un Excel a medio escribir, y una falla
+    durante la generación no toca el archivo que ya estaba.
+
+    El temporal vive en la misma carpeta que el destino: mover entre volúmenes
+    no es atómico.
     """
-    for archivo in sorted(carpeta.glob("*.xlsx")):
-        if archivo.name.startswith("~$") or not archivo.is_file():
-            continue
-        archivo.unlink()
+    temporal = destino.with_name(f"~tmp-{os.getpid()}-{destino.name}")
+    try:
+        escribir(reporte, plantilla, temporal)
+        os.replace(temporal, destino)
+    finally:
+        try:
+            temporal.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _apartar_excel_previo(destino: Path) -> str:
+    """Saca de en medio el Excel viejo que haya con el nombre `destino`.
+
+    Se llama cuando un archivo de entrada falló y su Excel NO se generó. Si en
+    output/ quedó el del mes pasado con ese mismo nombre, no puede seguir ahí
+    haciéndose pasar por el de esta corrida. Se lo renombra en vez de borrarlo:
+    el dato sigue estando por si el dueño lo necesita, pero el nombre ya no
+    engaña.
+
+    Devuelve el texto a agregar al motivo del fallo (vacío si no había nada).
+    """
+    if not destino.exists():
+        return ""
+
+    def apartado(intento: int) -> Path:
+        numero = "" if intento == 1 else f" {intento}"
+        return destino.with_name(
+            f"{destino.stem}{SUFIJO_CORRIDA_ANTERIOR}{numero}{destino.suffix}"
+        )
+
+    intento = 1
+    while apartado(intento).exists():
+        intento += 1
+    try:
+        destino.rename(apartado(intento))
+    except OSError:
+        return (
+            f"\n  OJO: en output/ quedó {destino.name} de una corrida anterior "
+            f"y no se pudo apartar (permiso denegado; es probable que lo tengas "
+            f"abierto). NO lo envíes: no es el Excel de esta corrida."
+        )
+    return (
+        f"\n  El {destino.name} que había quedado de una corrida anterior se "
+        f"renombró a {apartado(intento).name} para que no se confunda con el "
+        f"del mes."
+    )
 
 
 def _resumen_de_validacion(
@@ -143,15 +193,12 @@ def procesar_mes(mes: str, raiz: Path) -> int:
         return 1
 
     carpeta_salida = raiz / "output" / mes
+    # Único punto de salida que NO escribe _validacion.txt: si la carpeta no
+    # se pudo crear, no se tocó nada de output/ y tampoco hay dónde escribirlo.
     try:
         carpeta_salida.mkdir(parents=True, exist_ok=True)
-        _limpiar_xlsx_previos(carpeta_salida)
     except PermissionError:
-        print(f"ERROR: no se pudo preparar output/{mes}: permiso denegado.")
-        print(
-            "  Es probable que tengas abierto alguno de los Excel de la corrida "
-            "anterior. Cerralos y volvé a correr."
-        )
+        print(f"ERROR: no se pudo crear output/{mes}: permiso denegado.")
         return 1
     except OSError as error:
         print(f"ERROR: no se pudo preparar output/{mes}: {error}")
@@ -172,42 +219,65 @@ def procesar_mes(mes: str, raiz: Path) -> int:
             print(f"    {linea}")
         no_generados.append((entrada, motivo))
 
+    def registrar_fallo_de_mapeo(entrada: str, error: Exception, extra: str) -> None:
+        """Como registrar_fallo, pero sin indentar el mensaje en consola.
+
+        El mensaje de ErrorMapeo (en especial el bloque YAML sugerido para
+        mapeo.yaml) ya trae el sangrado pegable listo.
+        """
+        print(f"  {entrada}: NO GENERADO")
+        print(str(error) + extra)
+        no_generados.append((entrada, str(error) + extra))
+
     for entrada in entradas:
-        destino: Path | None = None
+        # Primero se resuelve la identidad del export: eso ya alcanza para
+        # saber qué archivo de output/ va a reemplazar esta entrada, antes de
+        # que pueda fallar cualquier otra cosa.
         try:
             registros = leer(entrada)
-            reporte = agregar(registros, mapeo, anio, numero_mes, entrada.name)
-            destino = carpeta_salida / nombre_de_archivo(reporte)
-            if destino in destinos_generados:
-                registrar_fallo(
-                    entrada.name,
-                    f"{destino.name} ya fue generado en esta corrida a partir de "
-                    f"{destinos_generados[destino]}.\n"
-                    f"Dejá en input/{mes}/ un solo export por desarrollador "
-                    "y volvé a correr.",
-                )
-                continue
-            escribir(reporte, plantilla, destino)
+            persona = resolver_identidad(registros, mapeo, entrada.name)
         except (ErrorLectura, ErrorMapeo) as error:
-            # En consola, sin indentación propia: el mensaje (en especial el
-            # bloque YAML sugerido para mapeo.yaml) ya trae el sangrado
-            # pegable listo.
-            print(f"  {entrada.name}: NO GENERADO")
-            print(str(error))
-            no_generados.append((entrada.name, str(error)))
+            # Destino todavía desconocido: no hay archivo viejo que apartar.
+            registrar_fallo_de_mapeo(entrada.name, error, "")
             continue
-        except PermissionError:
-            nombre_destino = destino.name if destino is not None else entrada.name
+        except (OSError, ValueError) as error:
+            registrar_fallo(entrada.name, f"Error al leer {entrada.name}: {error}")
+            continue
+
+        destino = carpeta_salida / nombre_de_archivo_de(numero_mes, persona.archivo)
+        if destino in destinos_generados:
+            # El destino lo acaba de generar otra entrada de esta misma
+            # corrida: no es un archivo viejo, no se aparta.
             registrar_fallo(
                 entrada.name,
-                f"No se pudo escribir {nombre_destino}: permiso denegado.\n"
-                "Es probable que tengas ese Excel abierto. Cerralo y volvé a correr.",
+                f"{destino.name} ya fue generado en esta corrida a partir de "
+                f"{destinos_generados[destino]}.\n"
+                f"Dejá en input/{mes}/ un solo export por desarrollador "
+                "y volvé a correr.",
+            )
+            continue
+
+        try:
+            reporte = agregar(registros, mapeo, anio, numero_mes, entrada.name)
+            _escribir_atomico(reporte, plantilla, destino)
+        except (ErrorLectura, ErrorMapeo) as error:
+            registrar_fallo_de_mapeo(
+                entrada.name, error, _apartar_excel_previo(destino)
+            )
+            continue
+        except PermissionError:
+            registrar_fallo(
+                entrada.name,
+                f"No se pudo escribir {destino.name}: permiso denegado.\n"
+                "Es probable que tengas ese Excel abierto. Cerralo y volvé a "
+                "correr." + _apartar_excel_previo(destino),
             )
             continue
         except (OSError, ValueError) as error:
             registrar_fallo(
                 entrada.name,
-                f"Error al generar el Excel de {entrada.name}: {error}",
+                f"Error al generar el Excel de {entrada.name}: {error}"
+                + _apartar_excel_previo(destino),
             )
             continue
 

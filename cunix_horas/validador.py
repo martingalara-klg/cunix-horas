@@ -6,7 +6,17 @@ import calendar
 from cunix_horas.agregador import Reporte
 
 LIMITE_HORAS_POR_DIA = 12.0
-TOLERANCIA = 0.01
+
+# Cada celda de día se redondea a 2 decimales, así que aporta como mucho
+# 0.005 h de desvío contra las horas crudas del export. El desvío del total
+# NO es "unos centésimos": escala con la cantidad de celdas de día no vacías
+# (un mes de 154 h con muchas celdas ya muestra 153.72: 0.28 h de desvío).
+#
+# A partir de acá el desvío se avisa. Media hora es el punto en que la
+# diferencia empieza a ser discutible en una factura; por debajo es ruido de
+# presentación que no vale la pena poner delante del dueño todos los meses.
+# 0.5 h equivale al peor caso de unas 100 celdas de día no vacías.
+UMBRAL_DESVIO_REDONDEO = 0.5
 
 
 def _fecha_legible(dia: int, mes: int, anio: int) -> str:
@@ -40,20 +50,20 @@ def validar(reporte: Reporte) -> list[str]:
         if not es_fin_de_semana and horas == 0:
             avisos.append(f"Día hábil sin carga: {legible}")
 
-    # Comparación sobre los valores REDONDEADOS, que son los que el cliente ve
-    # y suma en el Excel. Compararlos sin redondear dejaba la verificación
-    # ciega justo al riesgo que tiene que cubrir: un Excel cuyas filas no
-    # cierran a la vista aunque el total interno sea exacto.
+    # El total que el cliente ve es la suma de celdas ya redondeadas, así que
+    # puede apartarse de las horas reales del export: el error de cada celda se
+    # acumula. Comparar redondeado contra redondeado sería una tautología que
+    # no puede dispararse nunca; lo que hay que vigilar es esta otra diferencia.
     total_mostrado = reporte.total_redondeado
-    suma_por_dia = sum(
-        reporte.total_redondeado_del_dia(d)
-        for d in range(1, reporte.dias_del_mes + 1)
-    )
-    if abs(suma_por_dia - total_mostrado) > TOLERANCIA:
+    total_crudo = reporte.total
+    desvio = abs(total_mostrado - total_crudo)
+    if desvio > UMBRAL_DESVIO_REDONDEO:
         avisos.append(
-            f"Descuadre de horas: el total del mes es {total_mostrado:.2f} h pero la "
-            f"suma de los días da {suma_por_dia:.2f} h. No envíes este Excel y reportá "
-            f"el problema al equipo que mantiene la herramienta."
+            f"Desvío por redondeo: el Excel totaliza {total_mostrado:.2f} h y el "
+            f"export de Kimai trae {total_crudo:.2f} h, una diferencia de "
+            f"{desvio:.2f} h. No es un error de carga: cada celda de día se "
+            f"redondea a 2 decimales y esas diferencias se suman. Decidí vos si "
+            f"esa diferencia importa para facturar."
         )
 
     return avisos

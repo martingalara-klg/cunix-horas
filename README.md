@@ -24,11 +24,34 @@ Es el informe de la corrida y alcanza por sí solo para decidir si se envía:
   motivo y volver a correr antes de enviar nada.
 - **Los avisos de validación** de los Excel que sí se generaron (días hábiles
   sin carga, horas en fin de semana, más de 12 h en un día, registros fuera
-  del mes).
+  del mes, desvío por redondeo).
 
-Cada corrida vacía primero los `.xlsx` de `output/<mes>/` y los vuelve a
-generar, así que ahí nunca queda un Excel de una corrida anterior: lo que está
-en la carpeta es siempre lo que dice el informe.
+## Qué toca la herramienta en `output/<mes>/`
+
+Sólo los Excel que ella misma genera en esa corrida. Nada más de esa carpeta
+se borra: si dejás ahí un archivo tuyo, sigue estando después de correr.
+
+Cada Excel se escribe primero en un temporal y recién cuando salió entero se
+mueve sobre el nombre final. Así nunca queda un Excel a medio escribir, y si
+un archivo falla, el que ya estaba no se toca.
+
+Cuando un archivo falla y en la carpeta había un Excel del mes pasado con ese
+mismo nombre, ese archivo viejo **se renombra** a
+`... (CORRIDA ANTERIOR - NO ENVIAR).xlsx`. No se borra —el dato sigue ahí— pero
+el nombre ya no se puede confundir con el del mes, y `_validacion.txt` lo dice.
+
+Un Excel abierto es fallo de **ese** archivo, no de la corrida: los demás
+desarrolladores se generan igual. Y `_validacion.txt` se reescribe siempre,
+así que el informe nunca describe un estado que ya no es el de la carpeta.
+
+## El desvío por redondeo
+
+Cada celda de día se redondea a 2 decimales para que las filas del Excel
+cierren a la vista del cliente. El precio es que el total puede apartarse de
+las horas reales del export, y ese error crece con la cantidad de celdas
+(hasta 0.005 h por celda). Si la diferencia pasa de 0.5 h, `_validacion.txt`
+lo avisa con el número exacto: no es un error de carga, pero decidís vos si
+importa para facturar.
 
 ## Cuando aparece un proyecto o un dev nuevo
 
@@ -41,8 +64,11 @@ y se vuelve a correr.
 En Kimai hay que exportar **filtrando por un solo desarrollador**. Si un export
 trae horas de dos personas, el archivo no se genera y el motivo queda en
 `_validacion.txt`: sin esa verificación, las horas de todos se le facturarían
-a una sola. Lo mismo si el export no trae ninguna fila de datos, que suele ser
-el rango de fechas mal puesto.
+a una sola. Lo mismo si el export no trae ninguna fila de datos, o si trae
+filas pero **todas** caen fuera del mes que estás generando: las dos cosas
+suelen ser el rango de fechas mal puesto en Kimai, y las dos darían un Excel
+en blanco. El motivo, con el rango de fechas que sí trae el archivo, queda en
+`_validacion.txt`.
 
 ## Si el partner cambia el formato del Excel
 

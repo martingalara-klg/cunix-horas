@@ -42,9 +42,19 @@ FILA_ENCABEZADO = 1
 TEXTO_FILA_TOTAL = "Total"
 
 
+def nombre_de_archivo_de(mes: int, nombre_archivo: str) -> str:
+    """'Oct Dodera.xlsx', a partir del mes y el nombre de archivo de la persona.
+
+    Separado de `nombre_de_archivo()` porque el CLI necesita el nombre de
+    salida antes de tener un Reporte: con sólo la persona resuelta ya sabe qué
+    archivo de output/ va a reemplazar.
+    """
+    return f"{MESES_ABREVIADOS[mes]} {nombre_archivo}.xlsx"
+
+
 def nombre_de_archivo(reporte: Reporte) -> str:
     """'Oct Dodera.xlsx'."""
-    return f"{MESES_ABREVIADOS[reporte.mes]} {reporte.nombre_archivo}.xlsx"
+    return nombre_de_archivo_de(reporte.mes, reporte.nombre_archivo)
 
 
 def _columna_del_dia(dia: int) -> int:
