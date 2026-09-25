@@ -64,7 +64,9 @@ def agregar(
 
     acumulado: dict[tuple[str, str, str], dict[int, float]] = defaultdict(dict)
     for registro in del_mes:
-        destino = mapeo.resolver_proyecto(registro.cod_proyecto, "", archivo)
+        destino = mapeo.resolver_proyecto(
+            registro.cod_proyecto, registro.texto_proyecto, archivo
+        )
         clave = (destino.cliente, destino.proyecto, registro.actividad)
         dia = registro.fecha.day
         acumulado[clave][dia] = acumulado[clave].get(dia, 0.0) + registro.horas

@@ -1,10 +1,11 @@
 from datetime import date
 
+import pytest
 from conftest import FIXTURES
 
 from cunix_horas.agregador import agregar
 from cunix_horas.lector_kimai import Registro, leer
-from cunix_horas.mapeo import Mapeo
+from cunix_horas.mapeo import ErrorMapeo, Mapeo
 
 
 def mapeo():
@@ -102,6 +103,34 @@ def test_toma_el_nombre_del_dev_del_mapeo():
     reporte = agregar([reg(3, 2.0)], mapeo(), 2026, 8, "x.xlsx")
     assert reporte.nombre_dev == "Matias Zalazar"
     assert reporte.nombre_archivo == "Zalazar"
+
+
+def test_proyecto_sin_mapear_sugiere_el_alias_no_el_codigo(tmp_path):
+    """El texto original de Kimai (columna Project) debe llegar hasta el error.
+
+    Antes, agregar() llamaba a resolver_proyecto con texto_kimai="" porque
+    Registro no lo conservaba, y el mensaje repetía el código como alias.
+    """
+    ruta_mapeo = tmp_path / "mapeo.yaml"
+    ruta_mapeo.write_text(
+        "personas:\n"
+        "  mzalazar:\n"
+        '    nombre: "Matias Zalazar"\n'
+        '    archivo: "Zalazar"\n'
+        "proyectos:\n"
+        "  CO2610170:\n"
+        '    cliente: "Servicio Nacional de Aduanas"\n'
+        '    proyecto: "Subastas"\n',
+        encoding="utf-8",
+    )
+    registros = leer(FIXTURES / "kimai-mzalazar.xlsx")
+    with pytest.raises(ErrorMapeo) as excepcion:
+        agregar(registros, Mapeo.cargar(ruta_mapeo), 2026, 8, "kimai-mzalazar.xlsx")
+
+    mensaje = str(excepcion.value)
+    assert "CO2510115" in mensaje
+    assert "ISPCH-SopEvo-SIAC" in mensaje
+    assert 'proyecto: "ISPCH-SopEvo-SIAC"' in mensaje
 
 
 def test_sobre_el_fixture_real_cierran_los_totales():

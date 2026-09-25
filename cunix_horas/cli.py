@@ -83,20 +83,53 @@ def procesar_mes(mes: str, raiz: Path) -> int:
     avisos_totales: list[str] = []
     generados = 0
     hubo_errores = False
+    # Nombre de salida -> archivo de entrada que lo generó, para detectar
+    # colisiones (dos exports que resuelven al mismo "<Mes> <Apellido>.xlsx").
+    destinos_generados: dict[Path, str] = {}
 
     for entrada in entradas:
+        destino: Path | None = None
         try:
             registros = leer(entrada)
             reporte = agregar(registros, mapeo, anio, numero_mes, entrada.name)
             destino = carpeta_salida / nombre_de_archivo(reporte)
+            if destino in destinos_generados:
+                print(f"  {entrada.name}: NO GENERADO")
+                print(
+                    f"    {destino.name} ya fue generado en esta corrida a partir de "
+                    f"{destinos_generados[destino]}."
+                )
+                print(
+                    f"    Dejá en input/{mes}/ un solo export por desarrollador "
+                    "y volvé a correr."
+                )
+                hubo_errores = True
+                continue
             escribir(reporte, plantilla, destino)
         except (ErrorLectura, ErrorMapeo) as error:
+            # Sin indentación propia: el mensaje (en especial el bloque YAML
+            # sugerido para mapeo.yaml) ya trae el sangrado pegable listo.
             print(f"  {entrada.name}: NO GENERADO")
-            for linea in str(error).splitlines():
-                print(f"    {linea}")
+            print(str(error))
+            hubo_errores = True
+            continue
+        except PermissionError:
+            nombre_destino = destino.name if destino is not None else entrada.name
+            print(f"  {entrada.name}: NO GENERADO")
+            print(f"    No se pudo escribir {nombre_destino}: permiso denegado.")
+            print(
+                "    Es probable que tengas ese Excel abierto. "
+                "Cerralo y volvé a correr."
+            )
+            hubo_errores = True
+            continue
+        except (OSError, ValueError) as error:
+            print(f"  {entrada.name}: NO GENERADO")
+            print(f"    Error al generar el Excel de {entrada.name}: {error}")
             hubo_errores = True
             continue
 
+        destinos_generados[destino] = entrada.name
         clientes = len({f.cliente for f in reporte.filas})
         print(
             f"  {entrada.name}  ->  {destino.name}"

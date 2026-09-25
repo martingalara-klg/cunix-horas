@@ -48,6 +48,8 @@ class Registro:
     username: str
     cod_proyecto: str
     actividad: str
+    # Al final para no romper las construcciones posicionales existentes.
+    texto_proyecto: str = ""
 
 
 def serial_a_fecha(serial: str | float) -> date:
@@ -143,13 +145,15 @@ def leer(ruta: Path) -> list[Registro]:
     for fila in filas[1:]:
         if COL_FECHA not in fila:
             continue
+        texto_proyecto = fila.get(COL_PROYECTO, "")
         registros.append(
             Registro(
                 fecha=serial_a_fecha(fila[COL_FECHA]),
                 horas=float(fila.get(COL_DURACION, 0)) * 24,
                 username=fila.get(COL_USERNAME, ""),
-                cod_proyecto=codigo_de_proyecto(fila.get(COL_PROYECTO, "")),
+                cod_proyecto=codigo_de_proyecto(texto_proyecto),
                 actividad=fila.get(COL_ACTIVIDAD, ""),
+                texto_proyecto=texto_proyecto,
             )
         )
     return registros

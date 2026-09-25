@@ -55,6 +55,14 @@ def test_leer_extrae_username_actividad_y_codigo():
     }
 
 
+def test_leer_conserva_el_texto_original_de_proyecto():
+    """El texto completo de la columna Project viaja hasta agregador.agregar()."""
+    registros = leer(FIXTURES / "kimai-mzalazar.xlsx")
+    textos = {r.cod_proyecto: r.texto_proyecto for r in registros}
+    assert textos["CO2610170"].startswith("[CO2610170] Aduana-Subastas")
+    assert textos["CO2510115"].startswith("[CO2510115] ISPCH-SopEvo-SIAC")
+
+
 def test_leer_agrupa_las_horas_por_codigo_de_proyecto():
     registros = leer(FIXTURES / "kimai-mzalazar.xlsx")
     por_codigo = {}
