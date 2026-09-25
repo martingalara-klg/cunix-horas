@@ -1,14 +1,38 @@
 # Mapeo de Kimai al Excel que recibe el partner.
 #
-# personas:  clave = username de Kimai (columna F del export)
-# proyectos: clave = código entre corchetes del campo Project (columna J)
+# personas:  clave = username de Kimai (columna F del export plano).
+#            El campo `nombre` es el que va en A1 del Excel, y ademas es lo
+#            unico que trae el export de resumen mensual, que no tiene username:
+#            para esos archivos la persona se resuelve por `nombre`, asi que
+#            tiene que coincidir exactamente con lo que muestra Kimai.
+#            El campo `archivo` va en el nombre del Excel: "<Mes> <archivo>.xlsx".
 #
-# Si aparece un código nuevo, el proceso frena y te sugiere la línea a pegar.
+# proyectos: clave = codigo entre corchetes del campo Project (columna J).
+#            Se usa el codigo y no el nombre porque el codigo no cambia aunque
+#            alguien renombre el proyecto en Kimai.
+#
+# Si aparece un codigo o una persona sin mapear, el proceso frena ese archivo
+# (los demas se generan igual) y te muestra el bloque listo para pegar aca.
 
 personas:
+  franco:
+    nombre: "Franco Dodera"
+    archivo: "Dodera"
   mzalazar:
     nombre: "Matias Zalazar"
-    archivo: "Zalazar"
+    archivo: "M Zalazar"
+  lcarducci:
+    nombre: "Luciano Carducci"
+    archivo: "Carducci"
+  # Lautaro y Alexis exportaron con el reporte de resumen mensual, que no trae
+  # username. Se resuelven por `nombre`. Si algun mes exportan con el reporte
+  # plano y su username real no es este, el programa lo va a avisar y frenar.
+  lzalazar:
+    nombre: "Lautaro Zalazar"
+    archivo: "L Zalazar"
+  acarnero:
+    nombre: "Alexis Carnero"
+    archivo: "Carnero"
 
 proyectos:
   CO2610170:
@@ -20,3 +44,9 @@ proyectos:
   PR2510126:
     cliente: "MINVU"
     proyecto: "SELICO"
+  AD2690002:
+    cliente: "Sistemas - C.UNIX"
+    proyecto: "VictoriusCP2"
+  GI2680001:
+    cliente: "Sistemas - C.UNIX"
+    proyecto: "Victorius 3"
