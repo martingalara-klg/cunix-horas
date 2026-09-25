@@ -23,6 +23,12 @@ from pathlib import Path
 NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 EPOCA_EXCEL = date(1899, 12, 30)
 
+# Primera columna de día del resumen mensual: A es la etiqueta, B el total.
+# Vive acá y no en el lector porque `leer_hoja` la necesita para detectar las
+# filas mergeadas: si hubiera dos copias y alguien cambiara una, la detección
+# de la fila de cliente dejaría de coincidir con la lectura de la grilla.
+PRIMERA_COL_DE_DIA = "C"
+
 _CODIGO = re.compile(r"^\s*\[([^\]]+)\]")
 _SOLO_LETRAS = re.compile(r"[A-Z]+")
 
@@ -72,15 +78,33 @@ def serial_a_fecha(serial: str | float) -> date:
     return EPOCA_EXCEL + timedelta(days=float(serial))
 
 
-def codigo_de_proyecto(texto: str) -> str:
+def codigo_de_proyecto(texto: str, ubicacion: str = "") -> str:
     """Extrae el código entre corchetes del campo Project de Kimai.
 
     '[CO2610170] Aduana-Subastas | ...' -> 'CO2610170'
+
+    `ubicacion` es el archivo y la fila de donde salió el texto. Lo aporta
+    quien llama, que es el único que lo sabe: sin eso el dueño lee que hay un
+    proyecto sin código pero no en qué archivo ni en qué fila mirarlo.
     """
     coincidencia = _CODIGO.match(texto)
     if coincidencia is None:
-        raise ErrorLectura(f"Proyecto sin código entre corchetes: {texto!r}")
+        prefijo = f"{ubicacion}: " if ubicacion else ""
+        raise ErrorLectura(
+            f"{prefijo}Proyecto sin código entre corchetes: {texto!r}\n"
+            f"  Se esperaba que la columna de proyecto empezara con el código "
+            f"entre corchetes, como '[CO2610170] Nombre del proyecto'."
+        )
     return coincidencia.group(1)
+
+
+def letra_desde_indice(indice: int) -> str:
+    """1 -> 'A', 2 -> 'B', 33 -> 'AG'. Inversa de `indice_de_columna`."""
+    letras = ""
+    while indice > 0:
+        indice, resto = divmod(indice - 1, 26)
+        letras = chr(ord("A") + resto) + letras
+    return letras
 
 
 def tiene_codigo(texto: str) -> bool:
@@ -160,7 +184,9 @@ def _filas_mergeadas_desde(
     return frozenset(filas)
 
 
-def leer_hoja(ruta: Path, primera_columna_de_dia: str = "C") -> HojaXlsx:
+def leer_hoja(
+    ruta: Path, primera_columna_de_dia: str = PRIMERA_COL_DE_DIA
+) -> HojaXlsx:
     """Parsea la primera hoja de un .xlsx de Kimai."""
     if not zipfile.is_zipfile(ruta):
         raise ErrorLectura(f"{ruta.name} no es un archivo .xlsx válido")

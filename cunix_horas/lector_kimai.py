@@ -17,7 +17,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from cunix_horas.kimai_comun import (
-    EPOCA_EXCEL,
     ErrorLectura,
     Registro,
     codigo_de_proyecto,
@@ -30,7 +29,6 @@ from cunix_horas.lector_timesheet_xlsx import leer_timesheet_xlsx
 
 # Re-exportados para que el resto del programa siga importando de acá.
 __all__ = [
-    "EPOCA_EXCEL",
     "ErrorLectura",
     "Registro",
     "codigo_de_proyecto",

@@ -3,6 +3,10 @@
 Fila 1 = encabezados (`A1='Date'`), una fila por registro de tiempo. Las
 columnas se toman por posición porque es lo que este export viene emitiendo
 desde siempre, y el encabezado se verifica antes de leer nada.
+
+Una fila sin fecha pero con datos no se saltea: son horas que no llegarían al
+Excel del cliente y nadie se enteraría. Se falla nombrando el archivo y la
+fila. Una fila completamente vacía sí se saltea, que no pierde nada.
 """
 from __future__ import annotations
 
@@ -73,6 +77,25 @@ def _horas_de(valor: str | float, nro_fila: int, ruta: Path) -> float:
         ) from None
 
 
+def _error_de_fila_sin_fecha(
+    fila: dict[str, str], nro_fila: int, ruta: Path
+) -> ErrorLectura:
+    """Una fila con datos pero sin fecha son horas que no se facturarían."""
+    duracion = str(fila.get(COL_DURACION, "")).strip()
+    detalle = (
+        f" (trae {duracion!r} en la columna {COL_DURACION})" if duracion else ""
+    )
+    return ErrorLectura(
+        f"{ruta.name}, fila {nro_fila}: la columna {COL_FECHA} "
+        f"({ENCABEZADOS_ESPERADOS[COL_FECHA]}) está vacía pero la fila trae "
+        f"datos{detalle}.\n"
+        f"  Saltearla dejaría esas horas afuera del Excel del cliente sin "
+        f"avisar, así que no se genera nada con este archivo.\n"
+        f"  Completá la fecha en Kimai y exportá de nuevo, o borrá la fila "
+        f"entera si no corresponde."
+    )
+
+
 def leer_timesheet_xlsx(ruta: Path, hoja: HojaXlsx) -> list[Registro]:
     """Devuelve los registros de tiempo de un timesheet plano .xlsx."""
     filas = hoja.filas
@@ -80,15 +103,20 @@ def leer_timesheet_xlsx(ruta: Path, hoja: HojaXlsx) -> list[Registro]:
 
     registros: list[Registro] = []
     for nro_fila, fila in filas[1:]:
-        if COL_FECHA not in fila:
-            continue
+        if not str(fila.get(COL_FECHA, "")).strip():
+            if any(str(texto).strip() for texto in fila.values()):
+                raise _error_de_fila_sin_fecha(fila, nro_fila, ruta)
+            continue  # Fila completamente vacía: no hay nada que perder.
         texto_proyecto = fila.get(COL_PROYECTO, "")
         registros.append(
             Registro(
                 fecha=_fecha_de(fila[COL_FECHA], nro_fila, ruta),
                 horas=_horas_de(fila.get(COL_DURACION, 0), nro_fila, ruta) * 24,
                 username=fila.get(COL_USERNAME, ""),
-                cod_proyecto=codigo_de_proyecto(texto_proyecto),
+                cod_proyecto=codigo_de_proyecto(
+                    texto_proyecto, f"{ruta.name}, fila {nro_fila}, columna "
+                    f"{COL_PROYECTO} ({ENCABEZADOS_ESPERADOS[COL_PROYECTO]})"
+                ),
                 actividad=fila.get(COL_ACTIVIDAD, ""),
                 texto_proyecto=texto_proyecto,
             )

@@ -199,3 +199,35 @@ def test_un_xlsx_de_formato_desconocido_dice_que_encontro_y_que_espera(tmp_path)
     assert "A1='Date'" in mensaje
     assert "B1='Total'" in mensaje
     assert ".csv" in mensaje
+
+
+# --- I4: en el .xlsx plano, una fila con horas pero sin fecha tampoco se saltea
+
+
+def test_una_fila_del_xlsx_con_duracion_pero_sin_fecha_falla(tmp_path):
+    sin_fecha = _fila()
+    del sin_fecha["A"]
+    ruta = _xlsx_de_kimai(tmp_path / "kimai.xlsx", [_fila(), sin_fecha])
+    with pytest.raises(ErrorLectura) as excepcion:
+        leer(ruta)
+    mensaje = str(excepcion.value)
+    assert "kimai.xlsx" in mensaje
+    assert "fila 3" in mensaje
+    assert "columna A" in mensaje
+
+
+def test_una_fila_del_xlsx_con_todas_las_celdas_en_blanco_se_saltea(tmp_path):
+    """Ahí no hay horas que perder: saltearla está bien."""
+    ruta = _xlsx_de_kimai(tmp_path / "kimai.xlsx", [_fila(), {"D": "", "F": ""}])
+    assert len(leer(ruta)) == 1
+
+
+# --- M7: `EPOCA_EXCEL` no lo importaba nadie -------------------------------
+
+
+def test_lector_kimai_no_reexporta_la_epoca_de_excel():
+    """El re-export estaba muerto: `serial_a_fecha` es lo único que la usa."""
+    from cunix_horas import lector_kimai
+
+    assert "EPOCA_EXCEL" not in lector_kimai.__all__
+    assert not hasattr(lector_kimai, "EPOCA_EXCEL")
