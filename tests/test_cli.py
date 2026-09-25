@@ -464,3 +464,146 @@ def test_un_export_entero_fuera_del_mes_no_genera_un_excel_en_blanco(
     assert "otro rango de fechas" in texto
     assert "otro mes" in texto
     assert "0.0 h" not in capsys.readouterr().out
+
+
+# --- Regresión: el informe describe la CARPETA, no la corrida ---
+# (defecto Critical, tercera reincidencia en la misma zona: _validacion.txt
+# enumeraba lo que la corrida había hecho, pero el dueño envía lo que hay en
+# output/<mes>/. Todo .xlsx que quedara ahí sin ser de esta corrida —el Excel
+# huérfano de un dev que ya no está en input/, un apartado de hace tres
+# corridas, un archivo propio del dueño— viajaba al cliente sin que el informe
+# lo nombrara, incluso en corridas con "Sin avisos." y código de salida 0.)
+
+
+def test_un_excel_huerfano_de_una_corrida_anterior_se_nombra_en_el_informe(
+    tmp_path,
+):
+    """El caso vivo: el dev se fue y su export ya no está en input/.
+
+    Su Excel del mes pasado sigue en output/ con el nombre correcto del mes y
+    sin ninguna marca. La corrida es un éxito total y no lo menciona.
+    """
+    raiz = preparar_dos_devs(tmp_path)
+    salida = raiz / "output" / "2026-08"
+    assert procesar_mes("2026-08", raiz) == 0
+    assert (salida / "Aug Lopez.xlsx").is_file()
+
+    # Lopez se fue de la empresa: su export ya no está en input/.
+    (raiz / "input" / "2026-08" / "kimai-lopez.xlsx").unlink()
+    assert procesar_mes("2026-08", raiz) == 0
+
+    # El Excel viejo sigue en la carpeta: la herramienta nunca borra.
+    assert (salida / "Aug Lopez.xlsx").is_file()
+    texto = (salida / "_validacion.txt").read_text(encoding="utf-8")
+    assert "Aug Lopez.xlsx" in texto
+    assert "NO LOS ENVÍES" in texto
+    assert "NO generó" in texto
+    # Y el informe no puede cerrar con un "Sin avisos." tranquilizador.
+    assert "Sin avisos." not in texto
+
+
+def test_el_informe_nombra_los_huerfanos_tambien_en_una_corrida_exitosa(
+    tmp_path, capsys
+):
+    """Código 0 y ningún aviso: el camino donde el defecto era peor."""
+    raiz = preparar(tmp_path)
+    salida = raiz / "output" / "2026-08"
+    salida.mkdir(parents=True, exist_ok=True)
+    (salida / "Aug Lopez.xlsx").write_text("excel viejo", encoding="utf-8")
+
+    assert procesar_mes("2026-08", raiz) == 0
+    texto = (salida / "_validacion.txt").read_text(encoding="utf-8")
+    assert "Aug Lopez.xlsx" in texto
+    assert "NO LOS ENVÍES" in texto
+    assert "1 Excel generado/s" in texto
+    assert "NO generó" in capsys.readouterr().out
+
+
+def test_un_apartado_sigue_en_el_informe_en_las_corridas_siguientes(tmp_path):
+    """El apartado no desaparece del informe mientras no desaparezca del disco."""
+    raiz = corrida_fallida_despues_de_una_exitosa(tmp_path)
+    salida = raiz / "output" / "2026-08"
+    apartado = "Aug Zalazar (CORRIDA ANTERIOR - NO ENVIAR).xlsx"
+    assert (salida / apartado).is_file()
+
+    # Tercera corrida, esta vez sin errores: el apartado sigue ahí.
+    shutil.copy(FIXTURES / "mapeo-test.yaml", raiz / "config" / "mapeo.yaml")
+    assert procesar_mes("2026-08", raiz) == 0
+
+    assert (salida / apartado).is_file()
+    texto = (salida / "_validacion.txt").read_text(encoding="utf-8")
+    assert apartado in texto
+    assert "Apartados por la herramienta" in texto
+    assert "NO LOS ENVÍES" in texto
+
+
+def test_un_xlsx_ajeno_del_dueno_se_nombra_en_el_informe(tmp_path):
+    """No se borra (nunca), pero tampoco se calla: se envía la carpeta entera."""
+    raiz = preparar(tmp_path)
+    salida = raiz / "output" / "2026-08"
+    salida.mkdir(parents=True, exist_ok=True)
+    ajeno = salida / "NOTAS DEL DUENO.xlsx"
+    ajeno.write_text("notas del dueño", encoding="utf-8")
+
+    assert procesar_mes("2026-08", raiz) == 0
+    assert ajeno.is_file()
+    texto = (salida / "_validacion.txt").read_text(encoding="utf-8")
+    assert "NOTAS DEL DUENO.xlsx" in texto
+    assert "NO LOS ENVÍES" in texto
+
+
+def test_el_informe_no_confunde_lo_generado_con_lo_ajeno(tmp_path):
+    """Lo que esta corrida sí generó no puede aparecer como archivo de más."""
+    raiz = preparar(tmp_path)
+    assert procesar_mes("2026-08", raiz) == 0
+    texto = (raiz / "output" / "2026-08" / "_validacion.txt").read_text(
+        encoding="utf-8"
+    )
+    assert "NO LOS ENVÍES" not in texto
+    assert "no son de esta corrida" not in texto
+    assert "  - Aug Zalazar.xlsx" in texto
+
+
+def test_el_desvio_por_redondeo_se_informa_siempre(tmp_path):
+    """Dato de facturación: está aunque no supere el umbral ni haya avisos."""
+    raiz = preparar(tmp_path)
+    procesar_mes("2026-08", raiz)
+    texto = (raiz / "output" / "2026-08" / "_validacion.txt").read_text(
+        encoding="utf-8"
+    )
+    assert "--- Datos de los Excel generados ---" in texto
+    assert "Desvío por redondeo" in texto
+
+
+def test_si_no_se_puede_escribir_el_informe_va_a_un_archivo_alternativo(
+    tmp_path, capsys, monkeypatch
+):
+    """El _validacion.txt viejo describe otra corrida: no puede quedar solo."""
+    raiz = preparar(tmp_path)
+    assert procesar_mes("2026-08", raiz) == 0
+    salida = raiz / "output" / "2026-08"
+    viejo = (salida / "_validacion.txt").read_text(encoding="utf-8")
+
+    write_text_real = Path.write_text
+
+    def write_text_bloqueado(self, contenido, *args, **kwargs):
+        if self.name == "_validacion.txt":
+            raise PermissionError(13, "Acceso denegado")
+        return write_text_real(self, contenido, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", write_text_bloqueado)
+    assert procesar_mes("2026-08", raiz) == 1
+
+    alternativos = [
+        p for p in salida.glob("_validacion*.txt") if p.name != "_validacion.txt"
+    ]
+    assert len(alternativos) == 1
+    assert "NO SE PUDO ESCRIBIR" in alternativos[0].name
+    assert alternativos[0].read_text(encoding="utf-8").startswith(
+        "Corrida de output/2026-08/"
+    )
+    # El viejo sigue en disco intacto, y la consola avisa cuál hay que leer.
+    assert (salida / "_validacion.txt").read_text(encoding="utf-8") == viejo
+    consola = capsys.readouterr().out
+    assert "no se pudo escribir" in consola
+    assert "de una corrida anterior" in consola

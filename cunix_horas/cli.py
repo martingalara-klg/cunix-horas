@@ -10,13 +10,20 @@ from cunix_horas.agregador import Reporte, agregar, resolver_identidad
 from cunix_horas.escritor_excel import escribir, nombre_de_archivo_de
 from cunix_horas.lector_kimai import ErrorLectura, leer
 from cunix_horas.mapeo import ErrorMapeo, Mapeo
-from cunix_horas.validador import validar
+from cunix_horas.validador import dato_de_desvio, validar
 
 FORMATO_MES = re.compile(r"^(\d{4})-(\d{2})$")
 
 # Marca del Excel que quedó de una corrida anterior y que esta corrida no pudo
 # reemplazar. Va en el nombre para que sea imposible confundirlo con el del mes.
 SUFIJO_CORRIDA_ANTERIOR = " (CORRIDA ANTERIOR - NO ENVIAR)"
+
+NOMBRE_INFORME = "_validacion.txt"
+
+# Si _validacion.txt no se puede escribir, el que quedó en disco es el de
+# otra corrida y describe otra carpeta. El informe de esta corrida va
+# entonces a este otro nombre, que dice en la cara cuál hay que leer.
+NOMBRE_INFORME_ALTERNATIVO = "_validacion (NO SE PUDO ESCRIBIR _validacion.txt - LEER ESTE).txt"
 
 
 def _reconfigurar_salida_utf8() -> None:
@@ -108,17 +115,83 @@ def _apartar_excel_previo(destino: Path) -> str:
     )
 
 
+def _xlsx_que_esta_corrida_no_genero(
+    carpeta_salida: Path, generados: list[str]
+) -> list[str]:
+    """Los .xlsx que están en output/<mes>/ y NO salieron de esta corrida.
+
+    El dueño no envía lo que hizo la corrida: envía lo que hay en la carpeta.
+    Todo .xlsx que quede ahí sin que esta corrida lo haya generado —el Excel
+    huérfano de un dev que ya no está en input/, uno apartado hace tres
+    corridas, un archivo que el dueño dejó a mano— se le va adjunto al cliente
+    si nadie se lo nombra. Por eso el informe mira el disco, no la corrida.
+
+    Se ignoran los temporales: no son archivos del dueño y no sobreviven.
+    """
+    generados_ahora = set(generados)
+    try:
+        presentes = sorted(p.name for p in carpeta_salida.glob("*.xlsx"))
+    except OSError:
+        return []
+    return [
+        nombre
+        for nombre in presentes
+        if nombre not in generados_ahora
+        and not nombre.startswith("~tmp-")
+        and not nombre.startswith("~$")
+    ]
+
+
+def _seccion_de_ajenos(mes: str, ajenos: list[str]) -> list[str]:
+    """Las líneas del informe que enumeran lo que esta corrida no generó."""
+    if not ajenos:
+        return []
+
+    apartados = [n for n in ajenos if SUFIJO_CORRIDA_ANTERIOR in n]
+    otros = [n for n in ajenos if SUFIJO_CORRIDA_ANTERIOR not in n]
+
+    lineas = [
+        f"{len(ajenos)} .xlsx más en output/{mes}/ que esta corrida NO generó.",
+        "NO LOS ENVÍES: no forman parte de la entrega de este mes.",
+    ]
+    if apartados:
+        lineas.append("")
+        lineas.append(
+            "Apartados por la herramienta (eran de una corrida anterior):"
+        )
+        lineas.extend(f"  - {nombre}" for nombre in apartados)
+    if otros:
+        lineas.append("")
+        lineas.append(
+            "Nunca generados por esta corrida (quedaron de una corrida "
+            "anterior, o los pusiste vos ahí):"
+        )
+        lineas.extend(f"  - {nombre}" for nombre in otros)
+        lineas.append("")
+        lineas.append(
+            "Si alguno es el Excel de un desarrollador que este mes ya no "
+            "tiene su export en input/, está viejo: borralo o movelo fuera de "
+            "la carpeta antes de armar el envío."
+        )
+    lineas.append("")
+    return lineas
+
+
 def _resumen_de_validacion(
     mes: str,
     generados: list[str],
     no_generados: list[tuple[str, str]],
+    ajenos: list[str],
+    datos: list[str],
     avisos: list[str],
 ) -> str:
-    """Arma el contenido de _validacion.txt: primero el estado de la corrida.
+    """Arma el contenido de _validacion.txt: primero el estado de la carpeta.
 
     Este archivo es el informe que el dueño lee antes de mandar nada, así que
     tiene que alcanzar por sí solo para decidir. Nunca puede decir "Sin
-    avisos." si hubo archivos que no se generaron.
+    avisos." si hubo archivos que no se generaron, y nunca puede callar un
+    .xlsx que está en la carpeta sin ser de esta corrida: el dueño adjunta la
+    carpeta, no la corrida.
     """
     lineas: list[str] = [f"Corrida de output/{mes}/", ""]
 
@@ -144,6 +217,13 @@ def _resumen_de_validacion(
         )
         lineas.append("")
 
+    lineas.extend(_seccion_de_ajenos(mes, ajenos))
+
+    if datos:
+        lineas.append("--- Datos de los Excel generados ---")
+        lineas.append("")
+        lineas.extend(datos)
+
     lineas.append("--- Avisos de validación de los Excel generados ---")
     lineas.append("")
     if avisos:
@@ -155,9 +235,50 @@ def _resumen_de_validacion(
             "Ningún aviso sobre los Excel que sí se generaron, pero la corrida "
             "NO está completa: mirá la lista de NO GENERADOS de arriba."
         )
+    elif ajenos:
+        # Mismo criterio con los archivos ajenos: el resumen final no puede
+        # sonar a "está todo listo para enviar" si la carpeta tiene de más.
+        lineas.append(
+            "Ningún aviso sobre los Excel generados, pero la carpeta tiene "
+            f"{len(ajenos)} .xlsx que no son de esta corrida: mirá la lista de "
+            "arriba antes de armar el envío."
+        )
     else:
         lineas.append("Sin avisos.")
     return "\n".join(lineas).rstrip("\n") + "\n"
+
+
+def _escribir_informe(carpeta_salida: Path, mes: str, contenido: str) -> bool:
+    """Deja el informe de ESTA corrida en disco. Devuelve si fue en su nombre.
+
+    Si `_validacion.txt` no se puede escribir, el que quedó en disco es el de
+    una corrida anterior y describe otra cosa. Escribirlo igual en otro lado
+    es mejor que dejar al dueño con el viejo y sin saberlo, así que se escribe
+    en un nombre que dice a la vista cuál de los dos hay que leer.
+    """
+    try:
+        (carpeta_salida / NOMBRE_INFORME).write_text(contenido, encoding="utf-8")
+        return True
+    except PermissionError:
+        print(f"ERROR: no se pudo escribir output/{mes}/{NOMBRE_INFORME}: permiso denegado.")
+        print("  Es probable que lo tengas abierto en el Bloc de notas.")
+    except OSError as error:
+        print(f"ERROR: no se pudo escribir output/{mes}/{NOMBRE_INFORME}: {error}")
+
+    print(
+        f"  OJO: el {NOMBRE_INFORME} que hay en output/{mes}/ es de una corrida "
+        "anterior y NO describe lo que hay ahora en la carpeta."
+    )
+    alternativo = carpeta_salida / NOMBRE_INFORME_ALTERNATIVO
+    try:
+        alternativo.write_text(contenido, encoding="utf-8")
+    except OSError as error:
+        print(f"  Tampoco se pudo escribir {NOMBRE_INFORME_ALTERNATIVO}: {error}")
+        print("  No hay informe de esta corrida: no envíes nada de esa carpeta.")
+        return False
+    print(f"  El informe de esta corrida quedó en output/{mes}/{alternativo.name}")
+    print("  Leé ESE y borrá el viejo.")
+    return False
 
 
 def procesar_mes(mes: str, raiz: Path) -> int:
@@ -206,8 +327,10 @@ def procesar_mes(mes: str, raiz: Path) -> int:
 
     print(f"Procesando input/{mes}/ ...")
     avisos_totales: list[str] = []
+    datos_totales: list[str] = []
     generados: list[str] = []
     no_generados: list[tuple[str, str]] = []
+    cantidad_avisos = 0
     # Nombre de salida -> archivo de entrada que lo generó, para detectar
     # colisiones (dos exports que resuelven al mismo "<Mes> <Apellido>.xlsx").
     destinos_generados: dict[Path, str] = {}
@@ -289,28 +412,45 @@ def procesar_mes(mes: str, raiz: Path) -> int:
         )
         generados.append(destino.name)
 
+        # El desvío por redondeo va siempre, supere o no el umbral: es un dato
+        # de facturación, no una alarma, y por eso no cuenta como aviso.
+        datos_totales.append(f"=== {destino.name} ===")
+        datos_totales.append(f"  {dato_de_desvio(reporte)}")
+        datos_totales.append("")
+
         avisos = validar(reporte)
+        cantidad_avisos += len(avisos)
         if avisos:
             avisos_totales.append(f"=== {destino.name} ===")
             avisos_totales.extend(f"  {a}" for a in avisos)
             avisos_totales.append("")
 
-    cantidad_avisos = sum(1 for a in avisos_totales if a.startswith("  "))
-    contenido = _resumen_de_validacion(mes, generados, no_generados, avisos_totales)
-    try:
-        (carpeta_salida / "_validacion.txt").write_text(contenido, encoding="utf-8")
-    except PermissionError:
-        print(f"ERROR: no se pudo escribir output/{mes}/_validacion.txt: permiso denegado.")
-        print("  Es probable que lo tengas abierto en el Bloc de notas. Cerralo y volvé a correr.")
-        return 1
-    except OSError as error:
-        print(f"ERROR: no se pudo escribir output/{mes}/_validacion.txt: {error}")
-        return 1
+    ajenos = _xlsx_que_esta_corrida_no_genero(carpeta_salida, generados)
+    contenido = _resumen_de_validacion(
+        mes, generados, no_generados, ajenos, datos_totales, avisos_totales
+    )
+    informe_en_su_nombre = _escribir_informe(carpeta_salida, mes, contenido)
 
+    if ajenos:
+        print(
+            f"  OJO: en output/{mes}/ hay {len(ajenos)} .xlsx que esta corrida "
+            "NO generó. No los envíes; están listados en el informe."
+        )
     print(
         f"{len(generados)} archivo/s generado/s, {len(no_generados)} no generado/s, "
-        f"{cantidad_avisos} aviso/s en output/{mes}/_validacion.txt"
+        f"{cantidad_avisos} aviso/s en output/{mes}/{NOMBRE_INFORME}"
     )
+
+    if not informe_en_su_nombre:
+        return 1
+    # Los .xlsx ajenos NO cambian el código de salida. Que la carpeta tenga
+    # archivos de más no significa que la corrida haya fallado: los Excel del
+    # mes se generaron bien y la única acción pendiente es del dueño, sobre su
+    # propia carpeta. Además puede ser una situación permanente y querida (el
+    # dueño guarda ahí sus notas): un código 1 recurrente enseñaría a ignorar
+    # el código de salida, que es lo que distingue una corrida incompleta de
+    # una completa. El listado en el informe, que el dueño lee siempre antes de
+    # enviar, es lo que evita el envío equivocado.
     return 1 if no_generados else 0
 
 

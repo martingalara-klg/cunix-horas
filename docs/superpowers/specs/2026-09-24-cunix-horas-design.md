@@ -207,9 +207,18 @@ Salida en consola:
 
 ```
 Procesando input/2025-10/ ...
-  kimai-fdodera.xlsx   -> Oct Dodera.xlsx    (128.0 h, 2 clientes)
-  kimai-mzalazar.xlsx  -> Oct Zalazar.xlsx   (76.5 h, 3 clientes)
-2 archivos generados, 4 avisos en output/2025-10/_validacion.txt
+  kimai-fdodera.xlsx  ->  Oct Dodera.xlsx  (128.0 h, 2 cliente/s)
+  kimai-mzalazar.xlsx  ->  Oct Zalazar.xlsx  (76.5 h, 3 cliente/s)
+2 archivo/s generado/s, 0 no generado/s, 4 aviso/s en output/2025-10/_validacion.txt
+```
+
+Un archivo que no se genera no frena a los demás: sale como `NO GENERADO` con
+su motivo debajo y entra en la cuenta de la última línea. Y si en
+`output/<mes>/` quedó algún `.xlsx` que esta corrida no generó, antes de esa
+línea sale el aviso correspondiente:
+
+```
+  OJO: en output/2025-10/ hay 1 .xlsx que esta corrida NO generó. No los envíes; están listados en el informe.
 ```
 
 ## Testing

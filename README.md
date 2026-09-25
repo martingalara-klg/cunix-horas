@@ -11,20 +11,29 @@ Convierte los exports de Kimai en los Excel mensuales que recibe el partner.
    ```
    python -m cunix_horas 2025-10
    ```
-4. Los Excel quedan en `output/2025-10/`, listos para enviar.
-5. Leer `output/2025-10/_validacion.txt` **antes de mandar nada**.
+4. Los Excel del mes quedan en `output/2025-10/`.
+5. Leer `output/2025-10/_validacion.txt` **antes de mandar nada**: ahí está
+   la lista de los que van en el envío, y la de los que están en esa
+   carpeta pero **no** hay que enviar.
 
 ## Qué dice `_validacion.txt`
 
-Es el informe de la corrida y alcanza por sí solo para decidir si se envía:
+Es el informe de lo que quedó en `output/<mes>/` y alcanza por sí solo para
+decidir qué se envía:
 
 - **Qué Excel se generaron**, por nombre.
 - **Qué archivos NO se generaron y por qué.** Si aparece esta lista, la corrida
   está incompleta: esos Excel no están en la carpeta. Hay que corregir el
   motivo y volver a correr antes de enviar nada.
+- **Qué `.xlsx` hay en la carpeta que esta corrida NO generó.** Excel viejos de
+  un desarrollador que este mes ya no tiene export en `input/`, archivos que la
+  herramienta apartó en una corrida anterior, o archivos que dejaste vos ahí.
+  La herramienta no los borra, pero los nombra uno por uno: **esos no van en el
+  envío del mes.**
+- **El desvío por redondeo de cada Excel**, siempre, aunque sea chico.
 - **Los avisos de validación** de los Excel que sí se generaron (días hábiles
   sin carga, horas en fin de semana, más de 12 h en un día, registros fuera
-  del mes, desvío por redondeo).
+  del mes, desvío por redondeo por encima del umbral).
 
 ## Qué toca la herramienta en `output/<mes>/`
 
@@ -41,17 +50,29 @@ mismo nombre, ese archivo viejo **se renombra** a
 el nombre ya no se puede confundir con el del mes, y `_validacion.txt` lo dice.
 
 Un Excel abierto es fallo de **ese** archivo, no de la corrida: los demás
-desarrolladores se generan igual. Y `_validacion.txt` se reescribe siempre,
-así que el informe nunca describe un estado que ya no es el de la carpeta.
+desarrolladores se generan igual.
+
+`_validacion.txt` se reescribe en cada corrida y enumera **todos** los `.xlsx`
+que quedan en la carpeta: los que generó y los que no. Es decir, describe la
+carpeta, no lo que hizo la corrida. Lo que el informe no puede saber es lo que
+pase con la carpeta *después* de correr: si movés o agregás archivos a mano, el
+informe ya no corresponde y hay que volver a correr.
+
+Si `_validacion.txt` no se puede escribir (lo más común: lo tenés abierto), el
+de la corrida anterior queda en disco describiendo otra cosa. En ese caso la
+herramienta escribe el informe de esta corrida en
+`_validacion (NO SE PUDO ESCRIBIR _validacion.txt - LEER ESTE).txt`, lo avisa
+en consola y termina con error.
 
 ## El desvío por redondeo
 
 Cada celda de día se redondea a 2 decimales para que las filas del Excel
 cierren a la vista del cliente. El precio es que el total puede apartarse de
 las horas reales del export, y ese error crece con la cantidad de celdas
-(hasta 0.005 h por celda). Si la diferencia pasa de 0.5 h, `_validacion.txt`
-lo avisa con el número exacto: no es un error de carga, pero decidís vos si
-importa para facturar.
+(hasta 0.005 h por celda; una carga de 50 minutos, por ejemplo, pierde
+0.0033 h). `_validacion.txt` muestra el desvío exacto de cada Excel **siempre**,
+como dato, y si pasa de 0.25 h además lo avisa: no es un error de carga, pero
+decidís vos si importa para facturar.
 
 ## Cuando aparece un proyecto o un dev nuevo
 
