@@ -162,3 +162,40 @@ def test_una_duracion_no_numerica_da_un_error_en_espanol(tmp_path):
 def test_un_export_sin_filas_de_datos_se_lee_como_lista_vacia(tmp_path):
     """El lector no opina: es agregar() quien frena el export vacío."""
     assert leer(_xlsx_de_kimai(tmp_path / "kimai.xlsx", [])) == []
+
+
+# --- El despachador: leer() elige el lector según el archivo ---------------
+
+
+def test_el_xlsx_plano_de_otro_dev_se_sigue_leyendo_igual():
+    """El formato que ya andaba no cambia: segundo caso real del timesheet."""
+    registros = leer(FIXTURES / "kimai-timesheet-xlsx-lcarducci.xlsx")
+    assert len(registros) == 8
+    assert round(sum(r.horas for r in registros), 2) == 8.0
+    assert {r.username for r in registros} == {"lcarducci"}
+    assert {r.cod_proyecto for r in registros} == {"AD2690002"}
+    assert {r.actividad for r in registros} == {"Desarrollo", "Gestión"}
+    assert all(r.fecha.year == 2026 and r.fecha.month == 8 for r in registros)
+
+
+def test_un_xlsx_de_formato_desconocido_dice_que_encontro_y_que_espera(tmp_path):
+    ruta = tmp_path / "otra-cosa.xlsx"
+    hoja = (
+        '<?xml version="1.0"?>'
+        f'<worksheet xmlns="{NS_HOJA}"><sheetData><row r="1">'
+        '<c r="A1" t="inlineStr"><is><t>Resumen de horas</t></is></c>'
+        '<c r="B1" t="inlineStr"><is><t>Horas</t></is></c>'
+        "</row></sheetData></worksheet>"
+    )
+    with zipfile.ZipFile(ruta, "w") as archivo:
+        archivo.writestr("xl/worksheets/sheet1.xml", hoja)
+
+    with pytest.raises(ErrorLectura) as excepcion:
+        leer(ruta)
+    mensaje = str(excepcion.value)
+    assert "otra-cosa.xlsx" in mensaje
+    assert "Resumen de horas" in mensaje
+    assert "Horas" in mensaje
+    assert "A1='Date'" in mensaje
+    assert "B1='Total'" in mensaje
+    assert ".csv" in mensaje

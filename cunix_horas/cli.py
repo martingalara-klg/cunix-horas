@@ -1,4 +1,4 @@
-"""Orquestación: de input/<mes>/*.xlsx a output/<mes>/*.xlsx."""
+"""Orquestación: de los exports de input/<mes>/ a output/<mes>/*.xlsx."""
 from __future__ import annotations
 
 import os
@@ -8,7 +8,7 @@ from pathlib import Path
 
 from cunix_horas.agregador import Reporte, agregar, resolver_identidad
 from cunix_horas.escritor_excel import escribir, nombre_de_archivo_de
-from cunix_horas.lector_kimai import ErrorLectura, leer
+from cunix_horas.lector_kimai import EXTENSIONES_DE_ENTRADA, ErrorLectura, leer
 from cunix_horas.mapeo import ErrorMapeo, Mapeo
 from cunix_horas.validador import dato_de_desvio, validar
 
@@ -306,11 +306,20 @@ def procesar_mes(mes: str, raiz: Path) -> int:
         print(f"ERROR: falta la plantilla {plantilla}")
         return 1
 
+    # Los tres formatos de export de Kimai: .xlsx (timesheet plano y resumen
+    # mensual) y .csv (timesheet plano). '~$' es el archivo de bloqueo que
+    # deja Excel cuando el dueño tiene un export abierto.
     entradas = sorted(
-        p for p in carpeta_entrada.glob("*.xlsx") if not p.name.startswith("~$")
+        p
+        for extension in EXTENSIONES_DE_ENTRADA
+        for p in carpeta_entrada.glob(f"*{extension}")
+        if not p.name.startswith("~$")
     )
     if not entradas:
-        print(f"ERROR: no hay ningún .xlsx en input/{mes}")
+        print(
+            f"ERROR: no hay ningún export de Kimai "
+            f"({', '.join(EXTENSIONES_DE_ENTRADA)}) en input/{mes}"
+        )
         return 1
 
     carpeta_salida = raiz / "output" / mes

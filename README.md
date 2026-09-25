@@ -4,7 +4,8 @@ Convierte los exports de Kimai en los Excel mensuales que recibe el partner.
 
 ## Uso mensual
 
-1. En Kimai, exportar a **Excel** las horas del mes, **un archivo por desarrollador**.
+1. En Kimai, exportar las horas del mes, **un archivo por desarrollador**.
+   Sirve cualquiera de los tres exports (ver abajo).
 2. Crear la carpeta del mes y poner los archivos adentro:
    `input/2025-10/`  (el nombre de cada archivo da igual)
 3. Doble clic en `generar.bat`, o desde una terminal:
@@ -15,6 +16,34 @@ Convierte los exports de Kimai en los Excel mensuales que recibe el partner.
 5. Leer `output/2025-10/_validacion.txt` **antes de mandar nada**: ahí está
    la lista de los que van en el envío, y la de los que están en esa
    carpeta pero **no** hay que enviar.
+
+## Qué exports de Kimai lee
+
+Según con qué reporte exportes, Kimai da un archivo distinto. La herramienta
+lee los tres y no hay que decirle cuál es: lo detecta sola.
+
+- **Timesheet en Excel** (`.xlsx` con `Date` en A1): una fila por registro de
+  tiempo. Es el que se viene usando.
+- **Timesheet en CSV** (`.csv`): lo mismo, pero en texto. Kimai lo escribe con
+  la fecha al derecho (`2026-08-31`) y la duración en horas y minutos
+  (`2:00`).
+- **Resumen mensual** (`.xlsx` con `Total` en B1): la grilla de días, con la
+  misma forma que el Excel que se manda. De este se leen **sólo las filas de
+  actividad**; las de proyecto y de cliente son subtotales. Antes de dar nada
+  por bueno, la herramienta suma lo que leyó y lo compara contra el total que
+  el propio archivo declara: si no cierran, ese archivo no se genera y el
+  motivo queda en `_validacion.txt`.
+
+Si un archivo no es ninguno de los tres, **ese** archivo no se genera y el
+motivo dice qué encontró en la fila 1 y qué formatos se reconocen. Los demás
+desarrolladores se generan igual.
+
+Una cosa del resumen mensual: **no trae el usuario de Kimai**, sólo el nombre
+para mostrar (`Lautaro Zalazar`). La herramienta busca en `config/mapeo.yaml`
+primero por usuario y, si no lo encuentra, por el `nombre:` que ya está
+cargado en cada persona. Por eso el `nombre:` tiene que estar escrito igual
+que en Kimai. Si dos personas tienen el mismo `nombre:`, frena y lo dice en
+vez de elegir una.
 
 ## Qué dice `_validacion.txt`
 
@@ -109,7 +138,7 @@ python -m pytest -v
 ```
 config/mapeo.yaml        configuración editada a mano
 templates/plantilla.xlsx fuente de estilos del Excel de salida
-input/AAAA-MM/           exports de Kimai (se versionan)
+input/AAAA-MM/           exports de Kimai, .xlsx o .csv (se versionan)
 output/AAAA-MM/          Excel generados (NO se versionan)
 cunix_horas/             el código
 tests/                   los tests

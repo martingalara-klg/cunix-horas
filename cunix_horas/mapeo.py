@@ -26,10 +26,44 @@ class DestinoProyecto:
     proyecto: str
 
 
+def _normalizar(texto: str) -> str:
+    """Forma con la que se comparan los nombres para mostrar."""
+    return " ".join(texto.split()).casefold()
+
+
 def _alias_de_kimai(texto: str) -> str:
     """'[CO2610170] Aduana-Subastas | descripción larga' -> 'Aduana-Subastas'."""
     coincidencia = _ALIAS.match(texto)
     return coincidencia.group(1).strip() if coincidencia else texto.strip()
+
+
+def _sugerencia_de_persona(identificador: str, archivo: str) -> str:
+    """Mensaje de persona sin mapear, con el YAML listo para pegar.
+
+    Lo que llega puede ser un username (timesheet) o un nombre para mostrar
+    (resumen mensual), así que el bloque sugerido cambia según cuál sea: un
+    nombre con espacios no puede ser la clave, que es siempre el username.
+    """
+    es_nombre = " " in identificador.strip()
+    clave = "AJUSTAR-username-de-kimai" if es_nombre else identificador
+    nombre = (
+        identificador.strip()
+        if es_nombre
+        else "AJUSTAR - nombre completo, va en A1 del Excel"
+    )
+    return (
+        f"Desarrollador sin mapear en {archivo}: {identificador}\n"
+        f"  Así lo identifica este export: el timesheet trae el username de "
+        f"Kimai, y el resumen mensual trae el nombre para mostrar. "
+        f"config/mapeo.yaml resuelve las dos cosas, pero ninguna persona "
+        f"coincide con eso.\n"
+        f"  Si la persona ya está cargada, hacé que su username o su "
+        f"'nombre:' coincidan exactamente con lo de arriba.\n"
+        f"  Si no está, agregá bajo personas:\n"
+        f"  {clave}:\n"
+        f'    nombre: "{nombre}"\n'
+        f'    archivo: "AJUSTAR - apellido, va en el nombre del archivo"'
+    )
 
 
 class Mapeo:
@@ -40,6 +74,14 @@ class Mapeo:
     ) -> None:
         self._personas = personas
         self._proyectos = proyectos
+        # El resumen mensual de Kimai no trae el username, sólo el nombre para
+        # mostrar. Este índice permite resolver la persona también por ahí, sin
+        # agregar configuración nueva: el 'nombre:' ya está en cada entrada.
+        self._por_nombre: dict[str, list[str]] = {}
+        for username, persona in personas.items():
+            self._por_nombre.setdefault(_normalizar(persona.nombre), []).append(
+                username
+            )
 
     @classmethod
     def cargar(cls, ruta: Path) -> "Mapeo":
@@ -87,14 +129,29 @@ class Mapeo:
             )
         return destino
 
-    def resolver_persona(self, username: str, archivo: str) -> Persona:
-        persona = self._personas.get(username)
-        if persona is None:
+    def resolver_persona(self, identificador: str, archivo: str) -> Persona:
+        """La persona de `personas:`, buscada por username y si no por nombre.
+
+        El timesheet trae el username de Kimai; el resumen mensual trae sólo el
+        nombre para mostrar. Se busca primero por username, que es la clave del
+        mapeo, y recién si no aparece se busca por el 'nombre:' ya configurado.
+        """
+        persona = self._personas.get(identificador)
+        if persona is not None:
+            return persona
+
+        usernames = self._por_nombre.get(_normalizar(identificador), [])
+        if len(usernames) > 1:
             raise ErrorMapeo(
-                f"Desarrollador sin mapear en {archivo}: {username}\n"
-                f"  Agregá a config/mapeo.yaml, bajo personas:\n"
-                f"  {username}:\n"
-                f'    nombre: "AJUSTAR - nombre completo, va en A1 del Excel"\n'
-                f'    archivo: "AJUSTAR - apellido, va en el nombre del archivo"'
+                f"Nombre ambiguo en {archivo}: {identificador}\n"
+                f"  En config/mapeo.yaml hay más de una persona con ese "
+                f"'nombre:' ({', '.join(sorted(usernames))}).\n"
+                f"  Este export es un resumen mensual: no trae el username, "
+                f"sólo el nombre, así que no hay forma de saber cuál de las "
+                f"dos es sin inventar.\n"
+                f"  Cambiá el 'nombre:' de una de ellas para que no se repita."
             )
-        return persona
+        if usernames:
+            return self._personas[usernames[0]]
+
+        raise ErrorMapeo(_sugerencia_de_persona(identificador, archivo))

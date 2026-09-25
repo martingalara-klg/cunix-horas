@@ -17,7 +17,19 @@ Un proceso repetible: se depositan los exports mensuales de Kimai en una carpeta
 
 **No entra:** integración con la API de Kimai, envío de mails, facturación, tarifas o montos, interfaz gráfica.
 
-## Formato de entrada — export `.xlsx` de Kimai
+## Formato de entrada — los tres exports de Kimai
+
+Según con qué reporte de Kimai se exporte, sale un archivo distinto. Los tres se leen, siempre un archivo por desarrollador por mes. `lector_kimai.leer()` es un despachador: mira el archivo, elige el lector y devuelve `list[Registro]` en los tres casos, así que agregador, validador y escritor no se enteran del formato.
+
+| Se reconoce por | Formato | Lector |
+|---|---|---|
+| extensión `.csv` | timesheet plano en CSV | `lector_timesheet_csv.py` |
+| `.xlsx` con `A1='Date'` | timesheet plano en XLSX | `lector_timesheet_xlsx.py` |
+| `.xlsx` con `B1='Total'` | resumen mensual | `lector_resumen_mensual.py` |
+
+**Ante cualquier otra cosa se falla**, nunca se adivina: el error nombra el archivo, dice qué encontró en A1 y B1, y enumera los tres formatos que se reconocen. Como todo fallo de lectura, es de *ese* archivo: los demás desarrolladores se procesan igual.
+
+### 1. Timesheet plano `.xlsx`
 
 Export plano de registros de tiempo ("timesheet"), un archivo por desarrollador por mes. Fila 1 = encabezados. Columnas relevantes:
 
@@ -46,6 +58,33 @@ TypeError: SheetView.__init__() got an unexpected keyword argument 'showZeroes'
 Por lo tanto la lectura del input **no usa openpyxl**: se descomprime el `.xlsx` como ZIP y se parsea `xl/worksheets/sheet1.xml` con `xml.etree.ElementTree`, resolviendo `xl/sharedStrings.xml` y también celdas `inlineStr`. Verificado funcionando sobre el archivo real `20260924-kimai-export.xlsx`.
 
 La escritura del output **sí** usa openpyxl (la plantilla es un archivo normal).
+
+El parseo XML vive una sola vez, en `kimai_comun.py`, y lo usan los dos lectores de `.xlsx`.
+
+### 2. Timesheet plano `.csv`
+
+El mismo contenido que el anterior, con los mismos nombres de encabezado, pero con dos diferencias que importan: la fecha viene en ISO (`2026-08-31`) en vez de serial de Excel, y la duración viene en `H:MM` (`2:00`) en vez de fracción de día. El archivo está en UTF-8 y puede traer BOM.
+
+Acá las columnas se leen **por nombre de encabezado, no por posición**: Kimai agrega y reordena columnas de una versión a otra, y leer por posición haría que un export nuevo imputara horas equivocadas sin avisar.
+
+### 3. Resumen mensual `.xlsx`
+
+Tiene la misma forma que el Excel de salida: fila 1 con el nombre del dev, `Total` y un encabezado por día; después una fila de cliente, una de proyecto y una de actividad por cada combinación; y una fila `Total` al final.
+
+```
+A1='Lautaro Zalazar'  B1='Total'  C1='1/8/2026'  D1='2/8/2026' ...
+A2='[763043541] C.UNIX'                          B2='9,00'      <- CLIENTE (días mergeados)
+A3='[GI2680001] C.UNIX - Proyectos Internos ...' B3='9,00'  E3='0,50' ...   <- PROYECTO
+A4='Coordinación interna'                        B4='9,00'  E4='0,50' ...   <- ACTIVIDAD
+A5='Total'                                       B5='9,00'  ...
+```
+
+- **Qué es cada fila** se decide por estructura, no por posición, igual que del lado de la escritura (`escritor_excel._fila_cliente`): la de cliente tiene las celdas de día mergeadas, la de proyecto trae el código entre corchetes y las horas por día, y la de actividad viene abajo. **Sólo las filas de actividad emiten `Registro`**: las de proyecto son subtotales y duplicarían las horas.
+- **El orden de la fecha del encabezado se detecta por archivo.** Como están todas las columnas del mes, uno de los dos componentes es constante y ése es el mes: `1/8/2026`…`31/8/2026` es día/mes; `8/1/2026`…`8/31/2026` es mes/día. Si no se puede decidir sin ambigüedad, se falla: adivinar mal movería las horas de día y de mes sin que nadie lo note.
+- **El separador decimal también se detecta por archivo**: un export trae `9,00` y otro `150.0`.
+- **Red de seguridad:** el archivo declara su propio total en la columna B de la fila `Total`. Después de parsear se compara la suma leída contra ese total, y si no coinciden (con una tolerancia chica por el redondeo del propio archivo) se falla. Es una verificación que los otros dos formatos no permiten, y ataja cualquier error de lectura de la grilla antes de que llegue al Excel del cliente.
+
+Este formato **no trae el username**, sólo el nombre para mostrar (`A1`). El lector pone en `Registro.username` lo que venga en A1 y no sabe nada del mapeo; es `Mapeo.resolver_persona` el que busca primero por username y, si no encuentra, por el `nombre:` que ya está configurado en cada persona. Si dos personas comparten el mismo `nombre:`, falla en vez de elegir una.
 
 ## Formato de salida — Excel del partner
 
@@ -112,9 +151,9 @@ proyectos:
 ## Arquitectura
 
 ```
-input/2025-10/*.xlsx
+input/2025-10/*.xlsx  y  *.csv
    |
-   +--> lector_kimai    -> list[Registro]
+   +--> lector_kimai    -> detecta el formato y delega -> list[Registro]
    +--> mapeo           -> resuelve cliente/proyecto; ERROR si falta un código
    +--> agregador       -> Reporte: {cliente -> proyecto -> actividad -> {día: horas}}
    +--> validador       -> list[Aviso]
@@ -125,8 +164,12 @@ Módulos en `cunix_horas/` (paquete en la raíz del proyecto, no bajo `src/`: as
 
 | Módulo | Responsabilidad | Depende de |
 |--------|-----------------|------------|
-| `lector_kimai.py` | `.xlsx` de Kimai → `list[Registro]`. Parseo XML propio, serial de fecha, duración × 24. | — |
-| `mapeo.py` | Carga y valida el YAML. Resuelve código → (cliente, proyecto). Resuelve username → (nombre, archivo). | — |
+| `lector_kimai.py` | Despachador: detecta el formato del export y delega. | los tres lectores |
+| `kimai_comun.py` | `Registro`, `ErrorLectura` y el parseo XML del `.xlsx`, compartidos. | — |
+| `lector_timesheet_xlsx.py` | Timesheet `.xlsx` → `list[Registro]`. Serial de fecha, duración × 24. | `kimai_comun` |
+| `lector_timesheet_csv.py` | Timesheet `.csv` → `list[Registro]`. Fecha ISO, duración `H:MM`, columnas por nombre. | `kimai_comun` |
+| `lector_resumen_mensual.py` | Resumen mensual `.xlsx` → `list[Registro]`. Verifica contra el total declarado. | `kimai_comun` |
+| `mapeo.py` | Carga y valida el YAML. Resuelve código → (cliente, proyecto). Resuelve username *o* nombre para mostrar → (nombre, archivo). | — |
 | `agregador.py` | `list[Registro]` + mapeo → `Reporte` con jerarquía y totales. | `mapeo` |
 | `validador.py` | `Reporte` + registros → `list[Aviso]`. | — |
 | `escritor_excel.py` | `Reporte` + plantilla → `.xlsx`. | openpyxl |
@@ -168,8 +211,11 @@ Todas las estructuras son inmutables; cada etapa devuelve un valor nuevo.
       proyecto: "MINVU-Portal2"   # ajustá el nombre para el partner
   ```
 
-- `username` presente en el export pero ausente de `personas:` (mismo tratamiento).
-- Archivo de input ilegible o sin la estructura de columnas esperada.
+- Desarrollador presente en el export pero ausente de `personas:` (mismo tratamiento). Lo que llega puede ser el username (timesheet) o el nombre para mostrar (resumen mensual), y el bloque YAML sugerido se arma según cuál sea.
+- Dos personas de `personas:` con el mismo `nombre:` y un resumen mensual que trae ese nombre: no hay forma de saber cuál es, y se falla.
+- Resumen mensual cuyo total declarado no cierra con lo parseado.
+- Resumen mensual con encabezados de día ambiguos (no se puede decidir día/mes vs mes/día).
+- Archivo de input ilegible, de formato desconocido, o sin la estructura de columnas esperada.
 
 El fallo de un archivo **no impide** procesar los demás: cada input es independiente. Al final se reporta qué se generó y qué no.
 

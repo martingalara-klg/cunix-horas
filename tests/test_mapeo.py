@@ -163,3 +163,82 @@ proyectos:
     ), "La entrada no es un dict"
     assert "nombre" in datos["personas"]["fjohnson"]
     assert "archivo" in datos["personas"]["fjohnson"]
+
+
+# --- El resumen mensual trae el nombre para mostrar, no el username --------
+
+
+def _mapeo_con(personas: str, tmp_path):
+    ruta = tmp_path / "mapeo.yaml"
+    ruta.write_text(
+        "personas:\n" + personas + "\nproyectos:\n"
+        "  CO2610170:\n"
+        '    cliente: "Aduanas"\n'
+        '    proyecto: "Subastas"\n',
+        encoding="utf-8",
+    )
+    return Mapeo.cargar(ruta)
+
+
+def test_resolver_persona_por_el_nombre_para_mostrar():
+    """El resumen mensual identifica al dev por el 'nombre:' del mapeo."""
+    persona = cargar().resolver_persona("Matias Zalazar", "resumen.xlsx")
+    assert persona.archivo == "Zalazar"
+
+
+def test_el_username_gana_sobre_el_nombre(tmp_path):
+    """Primero se busca por clave; el nombre es el recurso de después."""
+    mapeo = _mapeo_con(
+        "  mzalazar:\n"
+        '    nombre: "Matias Zalazar"\n'
+        '    archivo: "Zalazar"\n'
+        "  Matias Zalazar:\n"
+        '    nombre: "Otro Dev"\n'
+        '    archivo: "Otro"\n',
+        tmp_path,
+    )
+    assert mapeo.resolver_persona("Matias Zalazar", "x.xlsx").archivo == "Otro"
+
+
+def test_el_nombre_se_compara_sin_importar_espacios_ni_mayusculas():
+    persona = cargar().resolver_persona("  matias   zalazar ", "resumen.xlsx")
+    assert persona.archivo == "Zalazar"
+
+
+def test_dos_personas_con_el_mismo_nombre_no_eligen_una(tmp_path):
+    mapeo = _mapeo_con(
+        "  mzalazar:\n"
+        '    nombre: "Matias Zalazar"\n'
+        '    archivo: "Zalazar"\n'
+        "  mzalazar2:\n"
+        '    nombre: "Matias Zalazar"\n'
+        '    archivo: "Zalazar M"\n',
+        tmp_path,
+    )
+    with pytest.raises(ErrorMapeo) as excepcion:
+        mapeo.resolver_persona("Matias Zalazar", "resumen.xlsx")
+    mensaje = str(excepcion.value)
+    assert "ambiguo" in mensaje
+    assert "mzalazar" in mensaje
+    assert "mzalazar2" in mensaje
+
+
+def test_un_nombre_sin_mapear_sugiere_un_yaml_pegable_con_ese_nombre(tmp_path):
+    with pytest.raises(ErrorMapeo) as excepcion:
+        cargar().resolver_persona("Lautaro Zalazar", "resumen.xlsx")
+    mensaje = str(excepcion.value)
+    assert "Lautaro Zalazar" in mensaje
+    assert "config/mapeo.yaml" in mensaje
+
+    # El bloque sugerido tiene que ser YAML pegable bajo personas:
+    lineas = mensaje.split("\n")
+    inicio = next(
+        i for i, linea in enumerate(lineas) if "AJUSTAR-username-de-kimai:" in linea
+    )
+    bloque = "\n".join(lineas[inicio:])
+    ruta = tmp_path / "pegado.yaml"
+    ruta.write_text("personas:\n" + bloque + "\n", encoding="utf-8")
+    datos = yaml.safe_load(ruta.read_text(encoding="utf-8"))
+    entrada = next(iter(datos["personas"].values()))
+    assert entrada["nombre"] == "Lautaro Zalazar"
+    assert "archivo" in entrada
