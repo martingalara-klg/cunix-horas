@@ -36,16 +36,118 @@ def test_separa_por_proyecto():
     assert {f.proyecto for f in reporte.filas} == {"Subastas", "SIAC-OIRS"}
 
 
-def test_separa_por_actividad_dentro_del_mismo_proyecto():
+def test_colapsa_las_actividades_del_mismo_proyecto_en_una_sola_fila():
+    """El partner no ve cómo clasifica cada dev sus horas dentro de Kimai.
+
+    Dos actividades distintas el mismo día se suman en una única fila, con el
+    texto de actividad que declara el mapeo.
+    """
     reporte = agregar(
-        [reg(3, 2.0, actividad="Desarrollo"), reg(3, 1.0, actividad="Testing")],
+        [
+            reg(3, 2.0, actividad="Desarrollo"),
+            reg(3, 1.0, actividad="Gestión"),
+            reg(4, 5.0, actividad="Gestión"),
+        ],
         mapeo(),
         2026,
         8,
         "x.xlsx",
     )
-    assert len(reporte.filas) == 2
-    assert {f.actividad for f in reporte.filas} == {"Desarrollo", "Testing"}
+    assert len(reporte.filas) == 1
+    fila = reporte.filas[0]
+    assert fila.actividad == "Desarrollo"
+    assert fila.horas_por_dia == {3: 3.0, 4: 5.0}
+    assert fila.total_redondeado == 8.0
+
+
+def test_colapsa_por_proyecto_no_por_cliente():
+    """Dos actividades en proyectos distintos del mismo cliente.
+
+    Cada proyecto conserva su propia fila de actividad: lo que se colapsa es
+    la clasificación de Kimai, no la separación por proyecto.
+    """
+    reporte = agregar(
+        [
+            reg(3, 2.0, "AD2690002", actividad="Desarrollo"),
+            reg(3, 1.0, "GI2680001", actividad="Gestión"),
+            reg(4, 3.0, "GI2680001", actividad="Desarrollo"),
+        ],
+        mapeo(),
+        2026,
+        8,
+        "x.xlsx",
+    )
+    assert [(f.proyecto, f.actividad, f.total_redondeado) for f in reporte.filas] == [
+        ("Victorius 3", "Desarrollo", 4.0),
+        ("VictoriusCP2", "Desarrollo", 2.0),
+    ]
+    assert {f.cliente for f in reporte.filas} == {"Sistemas - C.UNIX"}
+
+
+def test_nunca_sale_mas_de_una_fila_por_cliente_y_proyecto():
+    """La garantía estructural de la que depende el chequeo del escritor."""
+    registros = [
+        reg(dia, 1.0, codigo, actividad=actividad)
+        for dia in (3, 4)
+        for codigo in ("CO2610170", "CO2510115", "AD2690002")
+        for actividad in ("Desarrollo", "Gestión", "Testing")
+    ]
+    reporte = agregar(registros, mapeo(), 2026, 8, "x.xlsx")
+    claves = [(f.cliente, f.proyecto) for f in reporte.filas]
+    assert len(claves) == len(set(claves)) == 3
+
+
+def test_un_dev_con_una_sola_actividad_da_exactamente_lo_mismo_que_antes():
+    """Regresión: el Excel de los devs que cargan en una sola actividad no cambia.
+
+    `esperado` reproduce la agrupación vieja, que incluía la actividad real en
+    la clave. Con un solo valor de actividad tiene que dar idéntico resultado.
+    """
+    registros = leer(FIXTURES / "kimai-mzalazar.xlsx")
+    assert {r.actividad for r in registros} == {"Desarrollo"}
+
+    reporte = agregar(registros, mapeo(), 2026, 8, "kimai-mzalazar.xlsx")
+
+    acumulado: dict[tuple[str, str, str], dict[int, float]] = {}
+    for registro in registros:
+        destino = mapeo().resolver_proyecto(
+            registro.cod_proyecto, registro.texto_proyecto, "x"
+        )
+        clave = (destino.cliente, destino.proyecto, registro.actividad)
+        dias = acumulado.setdefault(clave, {})
+        dias[registro.fecha.day] = dias.get(registro.fecha.day, 0.0) + registro.horas
+    esperado = [
+        (cliente, proyecto, actividad, dict(sorted(dias.items())))
+        for (cliente, proyecto, actividad), dias in sorted(acumulado.items())
+    ]
+
+    assert [
+        (f.cliente, f.proyecto, f.actividad, f.horas_por_dia) for f in reporte.filas
+    ] == esperado
+
+
+def test_el_texto_de_la_fila_de_actividad_sale_del_mapeo(tmp_path):
+    ruta = tmp_path / "mapeo.yaml"
+    ruta.write_text(
+        'actividad: "Servicios profesionales"\n'
+        "personas:\n"
+        "  mzalazar:\n"
+        '    nombre: "Matias Zalazar"\n'
+        '    archivo: "Zalazar"\n'
+        "proyectos:\n"
+        "  CO2610170:\n"
+        '    cliente: "Servicio Nacional de Aduanas"\n'
+        '    proyecto: "Subastas"\n',
+        encoding="utf-8",
+    )
+    reporte = agregar(
+        [reg(3, 2.0, actividad="Desarrollo"), reg(3, 1.0, actividad="Gestión")],
+        Mapeo.cargar(ruta),
+        2026,
+        8,
+        "x.xlsx",
+    )
+    assert [f.actividad for f in reporte.filas] == ["Servicios profesionales"]
 
 
 def test_las_filas_salen_ordenadas_por_cliente():

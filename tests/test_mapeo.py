@@ -11,6 +11,19 @@ def cargar():
     return Mapeo.cargar(FIXTURES / "mapeo-test.yaml")
 
 
+CUERPO_MINIMO = """
+personas:
+  mzalazar:
+    nombre: "Matias Zalazar"
+    archivo: "Zalazar"
+proyectos:
+  CO2610170:
+    cliente: "Servicio Nacional de Aduanas"
+    proyecto: "Subastas"
+"""
+
+
+
 def test_resolver_proyecto_conocido():
     destino = cargar().resolver_proyecto("CO2610170", "[CO2610170] Aduana", "x.xlsx")
     assert destino.cliente == "Servicio Nacional de Aduanas"
@@ -242,3 +255,32 @@ def test_un_nombre_sin_mapear_sugiere_un_yaml_pegable_con_ese_nombre(tmp_path):
     entrada = next(iter(datos["personas"].values()))
     assert entrada["nombre"] == "Lautaro Zalazar"
     assert "archivo" in entrada
+
+
+# --- Texto de la única fila de actividad ---------------------------------
+
+
+def test_actividad_por_defecto_cuando_el_yaml_no_la_declara():
+    """mapeo-test.yaml no tiene 'actividad:': vale lo que el partner vio siempre."""
+    assert cargar().actividad == "Desarrollo"
+
+
+def test_actividad_declarada_en_el_yaml(tmp_path):
+    ruta = tmp_path / "mapeo.yaml"
+    ruta.write_text(
+        'actividad: "Servicios profesionales"'
+        + CUERPO_MINIMO,
+        encoding="utf-8",
+    )
+    assert Mapeo.cargar(ruta).actividad == "Servicios profesionales"
+
+
+@pytest.mark.parametrize("valor", ['""', '"   "', "", "7"])
+def test_actividad_vacia_o_no_textual_falla(tmp_path, valor):
+    ruta = tmp_path / "mapeo.yaml"
+    ruta.write_text("actividad: " + valor + CUERPO_MINIMO, encoding="utf-8")
+    with pytest.raises(ErrorMapeo) as excepcion:
+        Mapeo.cargar(ruta)
+    mensaje = str(excepcion.value)
+    assert "actividad:" in mensaje
+    assert "Desarrollo" in mensaje

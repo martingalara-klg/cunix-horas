@@ -1,11 +1,14 @@
 import hashlib
+from datetime import date
 
 import openpyxl
 import pytest
 from conftest import FIXTURES
 
-from cunix_horas.agregador import Fila, Reporte
+from cunix_horas.agregador import Fila, Reporte, agregar
 from cunix_horas.escritor_excel import escribir, nombre_de_archivo
+from cunix_horas.lector_kimai import Registro
+from cunix_horas.mapeo import Mapeo
 
 
 def reporte_de_ejemplo(anio=2025, mes=10):
@@ -430,3 +433,116 @@ def test_falla_si_los_proyectos_vienen_intercalados(tmp_path):
         _escribir_filas(tmp_path, filas)
     assert "P1" in str(excepcion.value)
     assert "agrupadas por proyecto" in str(excepcion.value)
+
+
+# --- Colapsada de actividades: del export de Kimai al Excel del partner -----
+#
+# Dos actividades del mismo proyecto con horas el mismo día. El redondeo tiene
+# que seguir ocurriendo una sola vez, sobre las horas YA sumadas: 1/3 + 1/3 en
+# el mismo día es 0.67, no 0.33 + 0.33 = 0.66.
+
+
+UN_TERCIO = 1 / 3
+DIAS_CON_HORAS = (3, 4, 5, 10, 20)
+
+
+def _registro(dia, horas, codigo, actividad):
+    return Registro(
+        fecha=date(2026, 8, dia),
+        horas=horas,
+        username="mzalazar",
+        cod_proyecto=codigo,
+        actividad=actividad,
+    )
+
+
+def _registros_de_dos_actividades():
+    """Tercios de hora repartidos entre 'Desarrollo' y 'Gestión' el mismo día."""
+    registros = []
+    for dia in DIAS_CON_HORAS:
+        registros.append(_registro(dia, UN_TERCIO, "CO2610170", "Desarrollo"))
+        registros.append(_registro(dia, UN_TERCIO, "CO2610170", "Gestión"))
+        registros.append(_registro(dia, UN_TERCIO, "CO2510115", "Gestión"))
+    return registros
+
+
+@pytest.fixture
+def hoja_colapsada(tmp_path):
+    reporte = agregar(
+        _registros_de_dos_actividades(),
+        Mapeo.cargar(FIXTURES / "mapeo-test.yaml"),
+        2026,
+        8,
+        "x.xlsx",
+    )
+    destino = tmp_path / "colapsada.xlsx"
+    escribir(reporte, FIXTURES / "plantilla.xlsx", destino)
+    return openpyxl.load_workbook(destino).active
+
+
+def test_una_sola_fila_de_actividad_por_proyecto(hoja_colapsada):
+    # 2 ISP Chile | 3 SIAC-OIRS | 4 Desarrollo | 5 Aduanas | 6 Subastas |
+    # 7 Desarrollo | 8 Total
+    etiquetas = [
+        hoja_colapsada.cell(row=f, column=1).value
+        for f in range(2, hoja_colapsada.max_row + 1)
+    ]
+    assert etiquetas == [
+        "Instituto de Salud Pública de Chile",
+        "SIAC-OIRS",
+        "Desarrollo",
+        "Servicio Nacional de Aduanas",
+        "Subastas",
+        "Desarrollo",
+        "Total",
+    ]
+    assert etiquetas.count("Desarrollo") == 2
+    assert "Gestión" not in etiquetas
+
+
+def test_el_dia_compartido_se_redondea_una_sola_vez_ya_sumado(hoja_colapsada):
+    # Subastas: 1/3 de Desarrollo + 1/3 de Gestión en cada día con horas.
+    for dia in DIAS_CON_HORAS:
+        celda = hoja_colapsada.cell(row=7, column=2 + dia).value
+        assert celda == 0.67, f"día {dia}: {celda}"
+    # SIAC-OIRS tiene una sola actividad: 1/3 -> 0.33.
+    for dia in DIAS_CON_HORAS:
+        assert hoja_colapsada.cell(row=4, column=2 + dia).value == 0.33
+
+
+def test_colapsada_cada_fila_cierra_con_la_suma_de_sus_celdas_de_dia(hoja_colapsada):
+    # Las filas de cliente (2 y 5) no llevan horas por día: las tienen mergeadas.
+    filas = (3, 4, 6, 7, hoja_colapsada.max_row)
+    for fila in filas:
+        suma_dias = round(sum(_celdas_de_dia(hoja_colapsada, fila)), 2)
+        total_b = hoja_colapsada.cell(row=fila, column=2).value
+        etiqueta = hoja_colapsada.cell(row=fila, column=1).value
+        assert suma_dias == total_b, (
+            f"fila {fila} ({etiqueta}): los días suman {suma_dias} "
+            f"pero la columna B dice {total_b}"
+        )
+
+
+def test_colapsada_cada_columna_de_dia_cierra_con_la_fila_total(hoja_colapsada):
+    filas_actividad = (4, 7)
+    fila_total = hoja_colapsada.max_row
+    for col in range(3, hoja_colapsada.max_column + 1):
+        suma = round(
+            sum(
+                hoja_colapsada.cell(row=f, column=col).value or 0.0
+                for f in filas_actividad
+            ),
+            2,
+        )
+        assert suma == hoja_colapsada.cell(row=fila_total, column=col).value, (
+            f"columna {col}: las actividades suman {suma} pero la fila Total "
+            f"dice {hoja_colapsada.cell(row=fila_total, column=col).value}"
+        )
+
+
+def test_colapsada_el_total_general_cierra(hoja_colapsada):
+    fila_total = hoja_colapsada.max_row
+    # 5 días * (0.67 de Subastas + 0.33 de SIAC-OIRS) = 5.0
+    assert hoja_colapsada.cell(row=fila_total, column=2).value == 5.0
+    assert hoja_colapsada["B2"].value == 1.65  # cliente ISP Chile
+    assert hoja_colapsada["B5"].value == 3.35  # cliente Aduanas

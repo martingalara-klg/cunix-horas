@@ -1,4 +1,25 @@
-"""Pivot de registros de Kimai a la jerarquía Cliente > Proyecto > Actividad."""
+"""Pivot de registros de Kimai a la jerarquía Cliente > Proyecto > Actividad.
+
+Cada proyecto sale con **una sola fila de actividad**, con el texto que declara
+`config/mapeo.yaml` (`Desarrollo` si no está declarado). Cómo clasifica sus
+horas cada desarrollador dentro de Kimai es información interna: el partner
+factura sobre el proyecto, y viene recibiendo una única fila desde siempre.
+
+La colapsada se hace acá, y no en el escritor, por dos razones:
+
+- **El redondeo sigue ocurriendo una sola vez.** Las horas de un mismo día que
+  vienen de actividades distintas se suman como `float` crudo, antes del único
+  `redondear()` de la celda de día. Colapsar después, sumando totales ya
+  redondeados, agregaría un segundo redondeo y el Excel podría dejar de cerrar.
+- **El escritor no puede recibir un proyecto repetido.** Al no estar la
+  actividad en la clave, es estructuralmente imposible que salgan dos filas del
+  mismo (cliente, proyecto), así que su chequeo de agrupación contigua queda
+  intacto y nunca se dispara por este motivo.
+
+El `Registro` que devuelve el lector conserva la actividad real de Kimai: es la
+lectura fiel del export, y sirve para diagnosticar. Lo que se colapsa es la
+presentación.
+"""
 from __future__ import annotations
 
 import calendar
@@ -178,18 +199,21 @@ def agregar(
 
     _verificar_hay_registros_del_mes(del_mes, descartados, anio, mes, archivo)
 
-    acumulado: dict[tuple[str, str, str], dict[int, float]] = defaultdict(dict)
+    # La actividad real del registro NO entra en la clave: el partner recibe una
+    # sola fila de actividad por proyecto, con el texto configurado en
+    # mapeo.yaml. Ver el docstring del módulo para el porqué.
+    acumulado: dict[tuple[str, str], dict[int, float]] = defaultdict(dict)
     for registro in del_mes:
         destino = mapeo.resolver_proyecto(
             registro.cod_proyecto, registro.texto_proyecto, archivo
         )
-        clave = (destino.cliente, destino.proyecto, registro.actividad)
+        clave = (destino.cliente, destino.proyecto)
         dia = registro.fecha.day
         acumulado[clave][dia] = acumulado[clave].get(dia, 0.0) + registro.horas
 
     filas = tuple(
-        Fila(cliente, proyecto, actividad, dict(sorted(horas.items())))
-        for (cliente, proyecto, actividad), horas in sorted(acumulado.items())
+        Fila(cliente, proyecto, mapeo.actividad, dict(sorted(horas.items())))
+        for (cliente, proyecto), horas in sorted(acumulado.items())
     )
 
     return Reporte(

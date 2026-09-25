@@ -9,6 +9,10 @@ import yaml
 
 _ALIAS = re.compile(r"^\s*\[[^\]]+\]\s*([^|]+)")
 
+# Texto de la única fila de actividad de cada proyecto, cuando `config/mapeo.yaml`
+# no lo declara. Es lo que el partner viene viendo desde siempre.
+ACTIVIDAD_POR_DEFECTO = "Desarrollo"
+
 
 class ErrorMapeo(Exception):
     """Falta una entrada en config/mapeo.yaml, o el archivo está mal formado."""
@@ -66,14 +70,43 @@ def _sugerencia_de_persona(identificador: str, archivo: str) -> str:
     )
 
 
+def _leer_actividad(contenido: dict, ruta: Path) -> str:
+    """Texto de la única fila de actividad, del YAML o el de por defecto.
+
+    Es opcional: si no está declarado vale `Desarrollo`, que es lo que el
+    partner recibió siempre. Si está pero vacío o no es texto, frena: un Excel
+    con la fila de actividad en blanco o con un número adentro se vería raro
+    del otro lado y nadie sabría de dónde salió.
+    """
+    if "actividad" not in contenido:
+        return ACTIVIDAD_POR_DEFECTO
+
+    actividad = contenido["actividad"]
+    if not isinstance(actividad, str) or not actividad.strip():
+        raise ErrorMapeo(
+            f"'actividad:' en {ruta} tiene que ser un texto no vacío: es el "
+            f"nombre de la única fila de actividad de cada proyecto en el "
+            f"Excel del partner.\n"
+            f"  Sacá la línea para usar el valor por defecto "
+            f'("{ACTIVIDAD_POR_DEFECTO}"), o poné el texto entre comillas.'
+        )
+    return actividad.strip()
+
+
 class Mapeo:
     """Traduce códigos de Kimai a los nombres del Excel del partner."""
 
     def __init__(
-        self, personas: dict[str, Persona], proyectos: dict[str, DestinoProyecto]
+        self,
+        personas: dict[str, Persona],
+        proyectos: dict[str, DestinoProyecto],
+        actividad: str = ACTIVIDAD_POR_DEFECTO,
     ) -> None:
         self._personas = personas
         self._proyectos = proyectos
+        # El partner no ve cómo clasifican los desarrolladores en Kimai: cada
+        # proyecto sale con una sola fila de actividad, siempre con este texto.
+        self.actividad = actividad
         # El resumen mensual de Kimai no trae el username, sólo el nombre para
         # mostrar. Este índice permite resolver la persona también por ahí, sin
         # agregar configuración nueva: el 'nombre:' ya está en cada entrada.
@@ -112,7 +145,7 @@ class Mapeo:
                     )
             proyectos[codigo] = DestinoProyecto(datos["cliente"], datos["proyecto"])
 
-        return cls(personas, proyectos)
+        return cls(personas, proyectos, _leer_actividad(contenido, ruta))
 
     def resolver_proyecto(
         self, codigo: str, texto_kimai: str, archivo: str

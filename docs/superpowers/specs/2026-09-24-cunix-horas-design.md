@@ -107,7 +107,8 @@ Reglas:
 - `A1` = nombre completo del desarrollador (de `personas.<username>.nombre`).
 - `B1` = literal `"Total"`.
 - `C1:…` = un encabezado por día del mes, **como texto** con formato `M/D/YYYY` (`10/1/2025`, sin cero a la izquierda). Se generan tantas columnas como días tenga el mes; para octubre son 31 (C..AG).
-- Jerarquía de filas: Cliente → Proyecto → Actividad. Un cliente puede tener varios proyectos; un proyecto, varias actividades.
+- Jerarquía de filas: Cliente → Proyecto → Actividad. Un cliente puede tener varios proyectos; **cada proyecto tiene exactamente una fila de actividad**.
+- **Una sola fila de actividad por proyecto.** En Kimai cada desarrollador clasifica sus horas como quiere (`Desarrollo`, `Gestión`, `Testing`…). Esa clasificación es interna: el partner factura sobre el proyecto y viene recibiendo una única fila desde siempre. Todas las actividades de un mismo proyecto se suman en una sola fila, cuyo texto sale de `actividad:` en `config/mapeo.yaml` (`Desarrollo` si no está declarado).
 - Columna `B` de cada fila = total del mes de esa fila.
 - Celdas de día vacías cuando no hay horas (no `0`).
 - Fila final `Total`: total general en `B`, y total por día en cada columna, **incluyendo `0.0`** en los días sin horas (así está en la plantilla).
@@ -134,6 +135,8 @@ Anchos de columna tomados de la plantilla: `A=34.14`, `B=9.29`, `C=14.0`, `L=15.
 ## Configuración — `config/mapeo.yaml`
 
 ```yaml
+actividad: "Desarrollo"
+
 personas:
   mzalazar:  { nombre: "Matias Zalazar", archivo: "Zalazar" }
   fdodera:   { nombre: "Franco Dodera",  archivo: "Dodera" }
@@ -147,6 +150,7 @@ proyectos:
 - La clave de `proyectos` es el código entre corchetes de la columna J (`[CO2610170]` → `CO2610170`). **Match exacto**, nunca por similitud de texto: el código es estable aunque se renombre el proyecto en Kimai, y un match difuso podría imputar horas al cliente equivocado sin que nadie lo note.
 - El cliente se declara **por proyecto**, no en una sección aparte. Esto permite agrupar en el Excel proyectos que en Kimai están bajo clientes distintos, o separarlos, según lo que quiera ver el partner.
 - La clave de `personas` es la columna F (username de Kimai), no el nombre.
+- `actividad:` es el texto de la **única fila de actividad** que lleva cada proyecto en el Excel. Es opcional: si no está declarado vale `Desarrollo`, que es lo que el partner recibió siempre. Es configuración y no una constante en el código para que cambiar lo que ve el partner sea editar una línea. Si está declarado pero vacío o no es texto, el mapeo no carga: un Excel con la fila de actividad en blanco se vería raro del otro lado y nadie sabría de dónde salió.
 
 ## Arquitectura
 
@@ -155,7 +159,7 @@ input/2025-10/*.xlsx  y  *.csv
    |
    +--> lector_kimai    -> detecta el formato y delega -> list[Registro]
    +--> mapeo           -> resuelve cliente/proyecto; ERROR si falta un código
-   +--> agregador       -> Reporte: {cliente -> proyecto -> actividad -> {día: horas}}
+   +--> agregador       -> Reporte: {cliente -> proyecto -> {día: horas}}, una fila de actividad por proyecto
    +--> validador       -> list[Aviso]
    +--> escritor_excel  -> output/2025-10/<Mes> <Apellido>.xlsx
 ```
@@ -170,7 +174,7 @@ Módulos en `cunix_horas/` (paquete en la raíz del proyecto, no bajo `src/`: as
 | `lector_timesheet_csv.py` | Timesheet `.csv` → `list[Registro]`. Fecha ISO, duración `H:MM`, columnas por nombre. | `kimai_comun` |
 | `lector_resumen_mensual.py` | Resumen mensual `.xlsx` → `list[Registro]`. Verifica contra el total declarado. | `kimai_comun` |
 | `mapeo.py` | Carga y valida el YAML. Resuelve código → (cliente, proyecto). Resuelve username *o* nombre para mostrar → (nombre, archivo). | — |
-| `agregador.py` | `list[Registro]` + mapeo → `Reporte` con jerarquía y totales. | `mapeo` |
+| `agregador.py` | `list[Registro]` + mapeo → `Reporte` con jerarquía y totales. Colapsa las actividades de cada proyecto en una sola fila. | `mapeo` |
 | `validador.py` | `Reporte` + registros → `list[Aviso]`. | — |
 | `escritor_excel.py` | `Reporte` + plantilla → `.xlsx`. | openpyxl |
 | `cli.py` | Orquesta: recorre `input/<mes>/`, procesa cada archivo, escribe output y `_validacion.txt`. | todos |
@@ -193,6 +197,8 @@ class Reporte:
     anio: int
     mes: int
     filas: tuple[Fila, ...]   # Fila: (cliente, proyecto, actividad, {día: horas})
+                              # una sola Fila por (cliente, proyecto);
+                              # `actividad` es el texto configurado, no el de Kimai
 ```
 
 Todas las estructuras son inmutables; cada etapa devuelve un valor nuevo.
@@ -229,7 +235,7 @@ El fallo de un archivo **no impide** procesar los demás: cada input es independ
 
 ## Precisión numérica
 
-Las horas se acumulan como `float` sin redondear y se redondean a 2 decimales **una sola vez: en la celda de día de la fila de actividad**, que es el dato de base. Todos los demás valores que se muestran —total de la actividad, celdas y total del proyecto, total del cliente, fila `Total` y totales por día— se derivan **sumando valores ya redondeados**.
+Las horas se acumulan como `float` sin redondear y se redondean a 2 decimales **una sola vez: en la celda de día de la fila de actividad**, que es el dato de base. Las horas de un mismo día que en Kimai vienen de actividades distintas se suman **antes** de ese redondeo, no después: por eso la colapsada de actividades vive en el agregador y no en el escritor. Colapsar en el escritor sumaría totales ya redondeados y agregaría un segundo redondeo (`1/3 + 1/3` daría `0.66` en vez de `0.67`), y el Excel podría dejar de cerrar. Todos los demás valores que se muestran —total de la actividad, celdas y total del proyecto, total del cliente, fila `Total` y totales por día— se derivan **sumando valores ya redondeados**.
 
 Este criterio reemplaza al anterior ("acumular sin redondear y redondear sólo al escribir"). Aquel suponía que redondear tarde garantizaba consistencia, y no la garantiza: cada celda se redondeaba por separado sobre una agregación distinta, así que con tercios de hora (20/40/50 minutos, muy comunes en Kimai) una fila mostraba `0.33` cinco veces y declaraba `1.67` de total. El total general era exacto, pero el Excel no cerraba a la vista y el cliente que suma una fila no obtenía el número declarado.
 

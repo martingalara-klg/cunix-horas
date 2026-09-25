@@ -11,8 +11,17 @@
 #            Se usa el codigo y no el nombre porque el codigo no cambia aunque
 #            alguien renombre el proyecto en Kimai.
 #
+# actividad: texto de la UNICA fila de actividad que lleva cada proyecto en el
+#            Excel. En Kimai cada dev clasifica sus horas como quiere
+#            (Desarrollo, Gestion, Testing...); el partner no ve esa
+#            clasificacion interna: todas esas horas se suman y salen en una
+#            sola fila con este texto. Si se borra la linea, vale "Desarrollo",
+#            que es lo que el partner recibio siempre.
+#
 # Si aparece un codigo o una persona sin mapear, el proceso frena ese archivo
 # (los demas se generan igual) y te muestra el bloque listo para pegar aca.
+
+actividad: "Desarrollo"
 
 personas:
   franco:

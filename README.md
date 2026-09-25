@@ -93,6 +93,34 @@ herramienta escribe el informe de esta corrida en
 `_validacion (NO SE PUDO ESCRIBIR _validacion.txt - LEER ESTE).txt`, lo avisa
 en consola y termina con error.
 
+## Una sola fila de actividad por proyecto
+
+El Excel tiene tres niveles de fila: cliente, proyecto y actividad. En Kimai
+cada desarrollador clasifica sus horas como quiere (`Desarrollo`, `Gestión`,
+`Testing`…), pero **el partner no ve esa clasificación interna**: factura sobre
+el proyecto, y viene recibiendo una sola fila desde siempre.
+
+Por eso todas las actividades de un mismo proyecto se suman en **una única
+fila**, incluso día por día:
+
+```
+Sistemas - C.UNIX   8
+  VictoriusCP2      8
+    Desarrollo      8      <- Desarrollo 5 + Gestión 3
+Total               8
+```
+
+El texto de esa fila sale de `actividad:` en `config/mapeo.yaml`. Si se borra
+esa línea vale `Desarrollo`, que es lo que el partner recibió siempre. Para
+cambiarlo alcanza con editar esa línea:
+
+```yaml
+actividad: "Desarrollo"
+```
+
+Proyectos distintos siguen separados: lo que se junta es la clasificación de
+Kimai, no los proyectos ni los clientes.
+
 ## El desvío por redondeo
 
 Cada celda de día se redondea a 2 decimales para que las filas del Excel

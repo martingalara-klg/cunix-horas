@@ -13,3 +13,9 @@ proyectos:
   PR2510126:
     cliente: "MINVU"
     proyecto: "SELICO"
+  AD2690002:
+    cliente: "Sistemas - C.UNIX"
+    proyecto: "VictoriusCP2"
+  GI2680001:
+    cliente: "Sistemas - C.UNIX"
+    proyecto: "Victorius 3"
