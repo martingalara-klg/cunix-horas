@@ -1,6 +1,24 @@
 # Mapeo de Kimai al Excel que recibe el partner.
 #
-# personas:  clave = username de Kimai (columna F del export plano).
+# archivo_salida: nombre del UNICO archivo que se manda cada mes.
+#            {mes} es el mes en tres letras, de la tabla fija del programa
+#            (Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec), y {anio} es el
+#            ano de cuatro digitos. Con el valor de abajo, agosto de 2026 sale
+#            como "Horas KLG-Aug2026.xlsx".
+#            OJO: el archivo de referencia que mando el partner se llama
+#            "Horas KLG-Sept2025.xlsx", con "Sept" y no "Sep". Si querés esa
+#            forma exacta, o los meses en español, se cambia ACA escribiendo
+#            el mes a mano (por ejemplo "Horas KLG-Sept{anio}.xlsx"), sabiendo
+#            que asi hay que actualizar esta linea todos los meses.
+#            Si se borra la linea vale "Horas KLG-{mes}{anio}.xlsx".
+#
+# personas:  OPCIONAL. El archivo que recibe el partner trae el nombre, el
+#            usuario y el mail de cada desarrollador tal como vienen de Kimai,
+#            asi que no hace falta declarar a nadie: si esta seccion no esta,
+#            el mapeo carga igual. La sigue usando el escritor por
+#            desarrollador, que quedo en el repo sin ejecutarse.
+#
+#            clave = username de Kimai (columna F del export plano).
 #            El campo `nombre` es el que va en A1 del Excel, y ademas es lo
 #            unico que trae el export de resumen mensual, que no tiene username:
 #            para esos archivos la persona se resuelve por `nombre`, asi que
@@ -18,8 +36,13 @@
 #            sola fila con este texto. Si se borra la linea, vale "Desarrollo",
 #            que es lo que el partner recibio siempre.
 #
-# Si aparece un codigo o una persona sin mapear, el proceso frena ese archivo
-# (los demas se generan igual) y te muestra el bloque listo para pegar aca.
+# proyectos: OPCIONAL entrada por entrada. Un proyecto que no este aca NO
+#            frena nada: sale con el nombre que trae Kimai y queda listado en
+#            _validacion.txt con el bloque listo para pegar, por si querés que
+#            el partner vea otro nombre. Cada fila lleva su Project number, asi
+#            que la trazabilidad no depende de esto.
+
+archivo_salida: "Horas KLG-{mes}{anio}.xlsx"
 
 actividad: "Desarrollo"
 

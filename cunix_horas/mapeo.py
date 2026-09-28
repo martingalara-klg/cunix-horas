@@ -9,6 +9,14 @@ import yaml
 
 _ALIAS = re.compile(r"^\s*\[[^\]]+\]\s*([^|]+)")
 
+# Prefijo '[codigo] ' del texto crudo de Kimai. Se saca para derivar el nombre
+# que ve el partner cuando el proyecto no esta declarado en el mapeo.
+_PREFIJO_CODIGO = re.compile(r"^\s*\[[^\]]+\]\s*")
+
+# Patrón del nombre del archivo que recibe el partner, cuando
+# config/mapeo.yaml no lo declara.
+PATRON_ARCHIVO_SALIDA = "Horas KLG-{mes}{anio}.xlsx"
+
 # Texto de la única fila de actividad de cada proyecto, cuando `config/mapeo.yaml`
 # no lo declara. Es lo que el partner viene viendo desde siempre.
 ACTIVIDAD_POR_DEFECTO = "Desarrollo"
@@ -33,6 +41,35 @@ class DestinoProyecto:
 def _normalizar(texto: str) -> str:
     """Forma con la que se comparan los nombres para mostrar."""
     return " ".join(texto.split()).casefold()
+
+
+def _sin_codigo(texto: str) -> str:
+    """Le saca el prefijo '[código] ' al texto crudo de Kimai, si lo tiene."""
+    return _PREFIJO_CODIGO.sub("", texto or "").strip()
+
+
+def derivar_cliente(texto_kimai: str) -> str:
+    """El nombre de cliente que ve el partner cuando el proyecto no está mapeado.
+
+    '[616050001] Instituto de Salud Pública' -> 'Instituto de Salud Pública'
+    'CUNIX'                                  -> 'CUNIX'
+
+    El segundo caso no es teórico: el cliente de uno de los desarrolladores
+    viene sin corchetes. Si la derivación asumiera el prefijo, ese nombre
+    saldría vacío y el partner recibiría una columna Customer en blanco.
+    """
+    return _sin_codigo(texto_kimai)
+
+
+def derivar_proyecto(texto_kimai: str) -> str:
+    """El nombre de proyecto que ve el partner cuando no está mapeado.
+
+    '[AD2690002] C.UNIX - Internos | C.UNIX - VictoriusCP2' -> 'C.UNIX - Internos'
+
+    Lo que va después del '|' es la descripción larga de Kimai, que no entra
+    en la columna Project.
+    """
+    return _sin_codigo(texto_kimai).split("|")[0].strip()
 
 
 def _alias_de_kimai(texto: str) -> str:
@@ -93,6 +130,45 @@ def _leer_actividad(contenido: dict, ruta: Path) -> str:
     return actividad.strip()
 
 
+def _leer_archivo_salida(contenido: dict, ruta: Path) -> str:
+    """Patrón del nombre del archivo del partner, del YAML o el de por defecto.
+
+    Se valida acá y no al escribir: si el patrón está mal, el error tiene que
+    salir antes de leer ningún export, y no después de haber procesado todo.
+    """
+    if "archivo_salida" not in contenido:
+        return PATRON_ARCHIVO_SALIDA
+
+    patron = contenido["archivo_salida"]
+    ayuda = (
+        f"  Sacá la línea para usar el valor por defecto "
+        f'("{PATRON_ARCHIVO_SALIDA}"), o escribilo entre comillas usando '
+        f"{{mes}} y {{anio}}."
+    )
+    if not isinstance(patron, str) or not patron.strip():
+        raise ErrorMapeo(
+            f"'archivo_salida:' en {ruta} tiene que ser un texto no vacío: es "
+            f"el nombre del archivo que recibe el partner.\n" + ayuda
+        )
+    patron = patron.strip()
+    try:
+        prueba = patron.format(mes="Aug", anio=2026)
+    except (KeyError, IndexError, ValueError):
+        raise ErrorMapeo(
+            f"'archivo_salida:' en {ruta} usa algo que no se entiende: "
+            f"{patron!r}.\n"
+            f"  Los únicos reemplazos que existen son {{mes}} y {{anio}}.\n"
+            + ayuda
+        ) from None
+    if not prueba.lower().endswith(".xlsx"):
+        raise ErrorMapeo(
+            f"'archivo_salida:' en {ruta} tiene que terminar en .xlsx: con "
+            f"{patron!r} el archivo se llamaría {prueba!r} y Excel no lo "
+            f"abriría.\n" + ayuda
+        )
+    return patron
+
+
 class Mapeo:
     """Traduce códigos de Kimai a los nombres del Excel del partner."""
 
@@ -101,9 +177,12 @@ class Mapeo:
         personas: dict[str, Persona],
         proyectos: dict[str, DestinoProyecto],
         actividad: str = ACTIVIDAD_POR_DEFECTO,
+        archivo_salida: str = PATRON_ARCHIVO_SALIDA,
     ) -> None:
         self._personas = personas
         self._proyectos = proyectos
+        # Patrón del nombre del único archivo que recibe el partner.
+        self.archivo_salida = archivo_salida
         # El partner no ve cómo clasifican los desarrolladores en Kimai: cada
         # proyecto sale con una sola fila de actividad, siempre con este texto.
         self.actividad = actividad
@@ -123,12 +202,15 @@ class Mapeo:
 
         contenido = yaml.safe_load(ruta.read_text(encoding="utf-8")) or {}
 
-        for seccion in ("personas", "proyectos"):
-            if seccion not in contenido:
-                raise ErrorMapeo(f"A {ruta} le falta la sección '{seccion}:'")
+        # 'personas:' es opcional desde que el entregable es el detalle plano:
+        # el nombre, el usuario y el mail de cada desarrollador salen de Kimai,
+        # así que el mapeo ya no los necesita para nada. La sección sigue
+        # leyéndose porque el escritor pivoteado, que queda en el repo, la usa.
+        if "proyectos" not in contenido:
+            raise ErrorMapeo(f"A {ruta} le falta la sección 'proyectos:'")
 
         personas: dict[str, Persona] = {}
-        for username, datos in (contenido["personas"] or {}).items():
+        for username, datos in (contenido.get("personas") or {}).items():
             for campo in ("nombre", "archivo"):
                 if campo not in (datos or {}):
                     raise ErrorMapeo(
@@ -145,7 +227,22 @@ class Mapeo:
                     )
             proyectos[codigo] = DestinoProyecto(datos["cliente"], datos["proyecto"])
 
-        return cls(personas, proyectos, _leer_actividad(contenido, ruta))
+        return cls(
+            personas,
+            proyectos,
+            _leer_actividad(contenido, ruta),
+            _leer_archivo_salida(contenido, ruta),
+        )
+
+    def proyecto_opcional(self, codigo: str) -> DestinoProyecto | None:
+        """El destino declarado para ese código, o None si no está declarado.
+
+        El detalle plano usa ésta y no `resolver_proyecto`: un proyecto sin
+        mapear ya no frena nada, sale con el nombre derivado de Kimai y se
+        lista en el informe. Cada fila lleva su `Project number`, así que la
+        trazabilidad no depende del mapeo.
+        """
+        return self._proyectos.get(codigo)
 
     def resolver_proyecto(
         self, codigo: str, texto_kimai: str, archivo: str

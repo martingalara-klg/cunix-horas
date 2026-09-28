@@ -1,14 +1,34 @@
+"""El pipeline completo: de input/<mes>/ al único archivo del partner.
+
+El riesgo central de este entregable es que todo va en un solo archivo: un
+desarrollador que falta ya no se nota por un Excel ausente en la carpeta. Por
+eso buena parte de estos tests mira el **nombre** del archivo generado y lo
+que dice `_validacion.txt`, no sólo que el archivo exista.
+"""
 import shutil
 import stat
 from pathlib import Path
 
 import openpyxl
 import yaml
-from conftest import FIXTURES
+from conftest import FIXTURES, RAIZ
 
 import cunix_horas.cli as cli
 from cunix_horas.cli import procesar_mes
-from cunix_horas.escritor_excel import escribir as escribir_real
+from cunix_horas.kimai_comun import leer_hoja
+from cunix_horas.lector_kimai import leer, leer_resumen_mensual
+
+LIMPIO = "Horas KLG-Aug2026.xlsx"
+APARTADO = "Horas KLG-Aug2026 (CORRIDA ANTERIOR - NO ENVIAR).xlsx"
+
+
+def incompleto(faltan):
+    plural = "N" if faltan > 1 else ""
+    sufijo = "ES" if faltan > 1 else ""
+    return (
+        f"Horas KLG-Aug2026 (INCOMPLETO - FALTA{plural} {faltan} "
+        f"DESARROLLADOR{sufijo} - NO ENVIAR).xlsx"
+    )
 
 
 def preparar(tmp_path, nombres=("kimai-mzalazar.xlsx",)):
@@ -23,41 +43,51 @@ def preparar(tmp_path, nombres=("kimai-mzalazar.xlsx",)):
     return tmp_path
 
 
-def test_genera_el_excel_del_mes(tmp_path):
+def informe(raiz, mes="2026-08"):
+    return (raiz / "output" / mes / "_validacion.txt").read_text(encoding="utf-8")
+
+
+def hoja_de(raiz, nombre, mes="2026-08"):
+    return openpyxl.load_workbook(raiz / "output" / mes / nombre).active
+
+
+def horas_de(hoja):
+    return (
+        sum(
+            hoja.cell(row=f, column=2).value.total_seconds()
+            for f in range(2, hoja.max_row + 1)
+        )
+        / 3600
+    )
+
+
+# --- Corrida feliz ----------------------------------------------------------
+
+
+def test_genera_el_archivo_del_mes_con_el_nombre_del_partner(tmp_path):
     raiz = preparar(tmp_path)
     assert procesar_mes("2026-08", raiz) == 0
-    salida = raiz / "output" / "2026-08" / "Aug Zalazar.xlsx"
-    assert salida.is_file()
-    hoja = openpyxl.load_workbook(salida).active
-    assert hoja["A1"].value == "Matias Zalazar"
-    assert hoja["B1"].value == "Total"
-    assert hoja.cell(row=hoja.max_row, column=1).value == "Total"
-
-
-def test_los_totales_del_excel_cierran_en_76_5(tmp_path):
-    raiz = preparar(tmp_path)
-    procesar_mes("2026-08", raiz)
-    hoja = openpyxl.load_workbook(
-        raiz / "output" / "2026-08" / "Aug Zalazar.xlsx"
-    ).active
-    assert hoja.cell(row=hoja.max_row, column=2).value == 76.5
+    hoja = hoja_de(raiz, LIMPIO)
+    assert hoja["A1"].value == "Date"
+    assert hoja.max_row == 25  # 24 registros + encabezado
+    assert horas_de(hoja) == 76.5
 
 
 def test_escribe_el_archivo_de_validacion(tmp_path):
     raiz = preparar(tmp_path)
     procesar_mes("2026-08", raiz)
-    validacion = raiz / "output" / "2026-08" / "_validacion.txt"
-    assert validacion.is_file()
-    assert "Día hábil sin carga" in validacion.read_text(encoding="utf-8")
+    texto = informe(raiz)
+    assert texto.startswith("Corrida de output/2026-08/")
+    assert "1 desarrollador/es en el archivo:" in texto
+    assert "Matias Zalazar (kimai-mzalazar.xlsx)" in texto
+    assert f"Archivo para el partner: {LIMPIO}" in texto
+    assert "Día hábil sin carga" in texto
 
 
-def test_un_archivo_roto_no_frena_a_los_demas(tmp_path, capsys):
+def test_no_quedan_temporales_despues_de_una_corrida(tmp_path):
     raiz = preparar(tmp_path)
-    (raiz / "input" / "2026-08" / "roto.xlsx").write_text("basura", encoding="utf-8")
-    codigo = procesar_mes("2026-08", raiz)
-    assert (raiz / "output" / "2026-08" / "Aug Zalazar.xlsx").is_file()
-    assert codigo == 1
-    assert "roto.xlsx" in capsys.readouterr().out
+    procesar_mes("2026-08", raiz)
+    assert [p.name for p in (raiz / "output" / "2026-08").glob("~tmp-*")] == []
 
 
 def test_falla_si_no_existe_la_carpeta_del_mes(tmp_path, capsys):
@@ -72,210 +102,215 @@ def test_falla_con_un_mes_mal_escrito(tmp_path, capsys):
     assert "AAAA-MM" in capsys.readouterr().out
 
 
-def test_un_proyecto_sin_mapear_frena_solo_a_ese_dev(tmp_path, capsys):
+# --- El riesgo central: un desarrollador que falta ---------------------------
+
+
+def test_un_archivo_roto_marca_el_consolidado_como_incompleto(tmp_path, capsys):
+    """Los demás entran igual, pero el nombre avisa que falta alguien."""
+    raiz = preparar(tmp_path)
+    (raiz / "input" / "2026-08" / "roto.xlsx").write_text("basura", encoding="utf-8")
+
+    assert procesar_mes("2026-08", raiz) == 1
+    salida = raiz / "output" / "2026-08"
+    assert not (salida / LIMPIO).exists()
+    assert (salida / incompleto(1)).is_file()
+
+    # El desarrollador que sí se leyó está completo.
+    assert horas_de(hoja_de(raiz, incompleto(1))) == 76.5
+
+    texto = informe(raiz)
+    assert "roto.xlsx" in texto
+    assert "NO entraron" in texto
+    assert "NO lo envíes" in texto
+    assert "roto.xlsx" in capsys.readouterr().out
+
+
+def test_el_informe_dice_quien_entro_y_quien_no_con_el_motivo(tmp_path):
+    raiz = preparar(tmp_path)
+    (raiz / "input" / "2026-08" / "roto.xlsx").write_text("basura", encoding="utf-8")
+    procesar_mes("2026-08", raiz)
+
+    texto = informe(raiz)
+    posicion_devs = texto.index("desarrollador/es en el archivo")
+    posicion_archivo = texto.index("Archivo para el partner")
+    # Quién entró y quién no va ARRIBA del nombre del archivo generado.
+    assert posicion_devs < texto.index("NO entraron") < posicion_archivo
+    assert "no es un archivo .xlsx válido" in texto
+
+
+def test_con_dos_archivos_rotos_el_nombre_dice_que_faltan_dos(tmp_path):
+    raiz = preparar(tmp_path)
+    for nombre in ("roto-a.xlsx", "roto-b.xlsx"):
+        (raiz / "input" / "2026-08" / nombre).write_text("basura", encoding="utf-8")
+    assert procesar_mes("2026-08", raiz) == 1
+    assert (raiz / "output" / "2026-08" / incompleto(2)).is_file()
+
+
+def test_una_corrida_incompleta_aparta_el_archivo_limpio_anterior(tmp_path):
+    """El limpio del mes pasado no puede quedar ahí para enviarse por error."""
+    raiz = preparar(tmp_path)
+    assert procesar_mes("2026-08", raiz) == 0
+    salida = raiz / "output" / "2026-08"
+    assert (salida / LIMPIO).is_file()
+
+    (raiz / "input" / "2026-08" / "roto.xlsx").write_text("basura", encoding="utf-8")
+    assert procesar_mes("2026-08", raiz) == 1
+
+    assert not (salida / LIMPIO).exists()
+    assert (salida / APARTADO).is_file()
+    assert (salida / incompleto(1)).is_file()
+    assert "CORRIDA ANTERIOR - NO ENVIAR" in informe(raiz)
+
+
+def test_si_no_se_pudo_leer_ningun_export_no_se_genera_nada(tmp_path):
+    raiz = preparar(tmp_path, nombres=())
+    (raiz / "input" / "2026-08" / "roto.xlsx").write_text("basura", encoding="utf-8")
+    assert procesar_mes("2026-08", raiz) == 1
+    assert list((raiz / "output" / "2026-08").glob("*.xlsx")) == []
+    assert "NO SE GENERÓ NINGÚN ARCHIVO" in informe(raiz)
+
+
+def test_un_export_entero_fuera_del_mes_no_entra_al_archivo(tmp_path):
+    """Mismo disparador que el export vacío: el rango de fechas mal en Kimai."""
+    raiz = preparar(tmp_path)
+    septiembre = raiz / "input" / "2026-09"
+    septiembre.mkdir(parents=True)
+    shutil.copy(FIXTURES / "kimai-mzalazar.xlsx", septiembre / "kimai-mzalazar.xlsx")
+
+    assert procesar_mes("2026-09", raiz) == 1
+    assert list((raiz / "output" / "2026-09").glob("*.xlsx")) == []
+
+    texto = informe(raiz, "2026-09")
+    assert "kimai-mzalazar.xlsx" in texto
+    assert "se descartaron por fecha" in texto
+    assert "/8/2026" in texto
+    assert "otro rango de fechas" in texto
+
+
+def test_un_archivo_de_salida_abierto_queda_en_el_informe(tmp_path, monkeypatch):
+    raiz = preparar(tmp_path)
+
+    def replace_bloqueado(origen, destino):
+        raise PermissionError(13, "Acceso denegado")
+
+    monkeypatch.setattr(cli.os, "replace", replace_bloqueado)
+    assert procesar_mes("2026-08", raiz) == 1
+    texto = informe(raiz)
+    assert "permiso denegado" in texto
+    assert "abierto" in texto
+
+
+# --- Integridad --------------------------------------------------------------
+
+
+def test_si_se_pierde_una_fila_al_escribir_no_se_genera_el_archivo(
+    tmp_path, monkeypatch
+):
+    """Fallo ruidoso, no aviso: el archivo se vería completo sin serlo."""
+    raiz = preparar(tmp_path)
+    escribir_real = cli.escribir_detalle
+
+    def escribir_perdiendo_una_fila(detalle, destino):
+        recortado = type(detalle)(
+            filas=detalle.filas[:-1],
+            sin_mapear=detalle.sin_mapear,
+            numeros_ambiguos=detalle.numeros_ambiguos,
+        )
+        return escribir_real(recortado, destino)
+
+    monkeypatch.setattr(cli, "escribir_detalle", escribir_perdiendo_una_fila)
+    assert procesar_mes("2026-08", raiz) == 1
+    assert list((raiz / "output" / "2026-08").glob("*.xlsx")) == []
+
+    texto = informe(raiz)
+    assert "NO tiene las mismas horas" in texto
+    assert "No se generó nada" in texto
+
+
+# --- Proyectos sin mapear y Project number ambiguo ---------------------------
+
+
+def test_un_proyecto_sin_mapear_ya_no_frena_y_queda_en_el_informe(tmp_path):
     raiz = preparar(tmp_path)
     (raiz / "config" / "mapeo.yaml").write_text(
-        "personas:\n"
-        "  mzalazar:\n"
-        '    nombre: "Matias Zalazar"\n'
-        '    archivo: "Zalazar"\n'
-        "proyectos:\n"
-        "  CO2610170:\n"
-        '    cliente: "Aduanas"\n'
+        'proyectos:\n  CO2610170:\n    cliente: "Aduanas"\n'
         '    proyecto: "Subastas"\n',
         encoding="utf-8",
     )
-    assert procesar_mes("2026-08", raiz) == 1
-    salida = capsys.readouterr().out
-    assert "CO2510115" in salida
-    assert "config/mapeo.yaml" in salida
-    assert not (raiz / "output" / "2026-08" / "Aug Zalazar.xlsx").exists()
+    assert procesar_mes("2026-08", raiz) == 0
+
+    hoja = hoja_de(raiz, LIMPIO)
+    proyectos = {
+        hoja.cell(row=f, column=7).value for f in range(2, hoja.max_row + 1)
+    }
+    clientes = {hoja.cell(row=f, column=6).value for f in range(2, hoja.max_row + 1)}
+    # El mapeado sale con el nombre del mapeo; el otro, con el de Kimai.
+    assert "Subastas" in proyectos
+    assert "ISPCH-SopEvo-SIAC" in proyectos
+    assert "Instituto de Salud Publica de Chile" in clientes
+
+    texto = informe(raiz)
+    assert "--- Proyectos sin mapear ---" in texto
+    assert "CO2510115:" in texto
 
 
-def test_el_bloque_yaml_sugerido_en_consola_es_pegable(tmp_path, capsys):
-    """Regresión: cli.py no debe romper el sangrado que arma mapeo.py.
-
-    Tarea 3 corrigió el sangrado del YAML sugerido para que fuera pegable
-    tal cual. cli.py lo rompía de nuevo indentando cada línea 4 espacios
-    más. Este test cubre el camino completo: lo que realmente se imprime
-    en consola, no el mensaje crudo de la excepción.
-    """
+def test_el_bloque_yaml_sugerido_en_el_informe_es_pegable(tmp_path):
+    """Lo que el informe ofrece pegar en mapeo.yaml tiene que ser YAML válido."""
     raiz = preparar(tmp_path)
-    (raiz / "config" / "mapeo.yaml").write_text(
-        "personas:\n"
-        "  mzalazar:\n"
-        '    nombre: "Matias Zalazar"\n'
-        '    archivo: "Zalazar"\n'
-        "proyectos:\n"
-        "  CO2610170:\n"
-        '    cliente: "Aduanas"\n'
-        '    proyecto: "Subastas"\n',
-        encoding="utf-8",
-    )
-    assert procesar_mes("2026-08", raiz) == 1
-    salida = capsys.readouterr().out
+    (raiz / "config" / "mapeo.yaml").write_text("proyectos:\n", encoding="utf-8")
+    assert procesar_mes("2026-08", raiz) == 0
 
-    lineas = salida.splitlines()
-    inicio_bloque = next(i for i, linea in enumerate(lineas) if "CO2510115:" in linea)
-    lineas_del_bloque = []
-    for linea in lineas[inicio_bloque:]:
-        if linea and not linea.startswith(" "):
-            break
-        lineas_del_bloque.append(linea)
-    bloque_yaml = "\n".join(lineas_del_bloque)
+    lineas = informe(raiz).splitlines()
+    inicio = next(i for i, linea in enumerate(lineas) if "CO2510115:" in linea)
+    bloque = "\n".join(lineas[inicio : inicio + 3])
 
-    ruta_mapeo = raiz / "config" / "mapeo.yaml"
-    ruta_mapeo.write_text(
-        ruta_mapeo.read_text(encoding="utf-8") + bloque_yaml + "\n",
-        encoding="utf-8",
-    )
-
-    datos = yaml.safe_load(ruta_mapeo.read_text(encoding="utf-8"))
-    assert "CO2510115" in datos["proyectos"]
-    assert isinstance(datos["proyectos"]["CO2510115"], dict)
+    ruta = raiz / "config" / "mapeo.yaml"
+    ruta.write_text(ruta.read_text(encoding="utf-8") + bloque + "\n", encoding="utf-8")
+    datos = yaml.safe_load(ruta.read_text(encoding="utf-8"))
     assert "cliente" in datos["proyectos"]["CO2510115"]
     assert "proyecto" in datos["proyectos"]["CO2510115"]
 
 
-def test_dos_archivos_que_resuelven_al_mismo_nombre_no_se_pisan(tmp_path, capsys):
-    """Dos exports del mismo dev (o un re-export) no deben pisarse en silencio."""
-    raiz = preparar(
-        tmp_path, nombres=("kimai-mzalazar-v1.xlsx", "kimai-mzalazar-v2.xlsx")
+def test_un_project_number_con_dos_nombres_se_avisa_en_el_informe(tmp_path):
+    """Alguien renombró el proyecto en Kimai a mitad de mes."""
+    from test_lector_kimai import _fila, _xlsx_de_kimai
+
+    raiz = preparar(tmp_path, nombres=())
+    (raiz / "config" / "mapeo.yaml").write_text("proyectos:\n", encoding="utf-8")
+    filas = []
+    for codigo, nombre in (("AA1", "Portal viejo"), ("AA2", "Portal nuevo")):
+        fila = _fila()
+        fila["J"] = f"[{codigo}] {nombre} | largo"
+        fila["R"] = "210"
+        filas.append(fila)
+    _xlsx_de_kimai(
+        raiz / "input" / "2026-08" / "kimai.xlsx",
+        filas,
+        encabezados={
+            "A": "Date",
+            "D": "Duration",
+            "F": "User",
+            "J": "Project",
+            "K": "Activity",
+            "R": "Project number",
+        },
     )
-    codigo = procesar_mes("2026-08", raiz)
-    assert codigo == 1
-    salida = capsys.readouterr().out
-    assert "kimai-mzalazar-v1.xlsx" in salida
-    assert "kimai-mzalazar-v2.xlsx" in salida
-    assert "Aug Zalazar.xlsx" in salida
-    # El primero de los dos igual se genera; no se pierde ese reporte.
-    assert (raiz / "output" / "2026-08" / "Aug Zalazar.xlsx").is_file()
 
-
-def test_un_excel_abierto_no_frena_a_los_demas(tmp_path, capsys, monkeypatch):
-    """Si escribir() falla por PermissionError (Excel abierto), no debe caer todo."""
-    raiz = preparar(tmp_path, nombres=("kimai-a.xlsx", "kimai-b.xlsx"))
-
-    llamadas = {"n": 0}
-
-    def escribir_simulado(reporte, plantilla, destino):
-        llamadas["n"] += 1
-        if llamadas["n"] == 1:
-            raise PermissionError(13, "Acceso denegado")
-        return escribir_real(reporte, plantilla, destino)
-
-    monkeypatch.setattr(cli, "escribir", escribir_simulado)
-
-    codigo = procesar_mes("2026-08", raiz)
-    assert codigo == 1
-    salida = capsys.readouterr().out
-    assert "kimai-a.xlsx" in salida
-    assert "abierto" in salida.lower()
-    # El segundo archivo (mismo nombre de salida) sí se generó.
-    assert (raiz / "output" / "2026-08" / "Aug Zalazar.xlsx").is_file()
-
-
-# --- Regresión: después de una corrida fallida, output/ no puede mentir ---
-# (defecto Critical: quedaba el Excel de la corrida anterior, con nombre y
-# aspecto legítimos, y _validacion.txt se sobrescribía con "Sin avisos.".
-# El README declara ese archivo como lo único autoritativo antes de enviar.)
-
-MAPEO_SIN_UN_PROYECTO = (
-    "personas:\n"
-    "  mzalazar:\n"
-    '    nombre: "Matias Zalazar"\n'
-    '    archivo: "Zalazar"\n'
-    "proyectos:\n"
-    "  CO2610170:\n"
-    '    cliente: "Aduanas"\n'
-    '    proyecto: "Subastas"\n'
-)
-
-
-def corrida_fallida_despues_de_una_exitosa(tmp_path):
-    """Corrida 1 OK; aparece un proyecto sin mapear; corrida 2 falla."""
-    raiz = preparar(tmp_path)
     assert procesar_mes("2026-08", raiz) == 0
-    assert (raiz / "output" / "2026-08" / "Aug Zalazar.xlsx").is_file()
-
-    (raiz / "config" / "mapeo.yaml").write_text(
-        MAPEO_SIN_UN_PROYECTO, encoding="utf-8"
-    )
-    assert procesar_mes("2026-08", raiz) == 1
-    return raiz
+    texto = informe(raiz)
+    assert "El Project number 210 aparece con 2 nombres" in texto
+    assert "Portal nuevo" in texto and "Portal viejo" in texto
 
 
-def test_una_corrida_fallida_no_deja_el_excel_de_la_anterior(tmp_path):
-    """Nada en output/ puede seguir aparentando ser el Excel del mes.
+# --- Un export con dos desarrolladores --------------------------------------
 
-    El Excel de la corrida anterior no se borra —el dato sigue disponible—
-    pero se lo aparta con un nombre que no se puede confundir con el del mes.
+
+def test_un_export_con_dos_devs_entra_igual_y_cada_fila_lleva_su_dueno(tmp_path):
+    """En el detalle plano cada fila trae su Name, User y E-mail.
+
+    El chequeo viejo (un export por persona) existía porque el Excel pivoteado
+    le imputaba todas las horas a una sola persona. Acá eso no puede pasar.
     """
-    raiz = corrida_fallida_despues_de_una_exitosa(tmp_path)
-    salida = raiz / "output" / "2026-08"
-    assert not (salida / "Aug Zalazar.xlsx").exists()
-    quedaron = sorted(p.name for p in salida.glob("*.xlsx"))
-    assert quedaron == ["Aug Zalazar (CORRIDA ANTERIOR - NO ENVIAR).xlsx"]
-
-
-def test_la_validacion_de_una_corrida_fallida_nombra_los_no_generados(tmp_path):
-    raiz = corrida_fallida_despues_de_una_exitosa(tmp_path)
-    texto = (raiz / "output" / "2026-08" / "_validacion.txt").read_text(
-        encoding="utf-8"
-    )
-    assert "Sin avisos." not in texto
-    assert "NO GENERADO" in texto
-    assert "kimai-mzalazar.xlsx" in texto
-    assert "CO2510115" in texto  # el motivo concreto, no sólo el nombre
-    assert "0 Excel generado/s" in texto
-
-
-def test_la_validacion_de_una_corrida_exitosa_empieza_con_el_resumen(tmp_path):
-    raiz = preparar(tmp_path)
-    procesar_mes("2026-08", raiz)
-    texto = (raiz / "output" / "2026-08" / "_validacion.txt").read_text(
-        encoding="utf-8"
-    )
-    assert texto.startswith("Corrida de output/2026-08/")
-    assert "1 Excel generado/s" in texto
-    assert "  - Aug Zalazar.xlsx" in texto
-    assert "0 archivo" not in texto  # sin errores, no se lista la sección
-
-
-def test_el_resumen_de_consola_cuenta_los_no_generados(tmp_path, capsys):
-    raiz = preparar(tmp_path)
-    (raiz / "input" / "2026-08" / "roto.xlsx").write_text("basura", encoding="utf-8")
-    procesar_mes("2026-08", raiz)
-    salida = capsys.readouterr().out
-    assert "1 archivo/s generado/s, 1 no generado/s" in salida
-
-
-def test_los_totales_del_excel_generado_cierran_fila_por_fila(tmp_path):
-    """Sobre el pipeline completo, no sólo sobre datos sintéticos."""
-    raiz = preparar(tmp_path)
-    procesar_mes("2026-08", raiz)
-    hoja = openpyxl.load_workbook(
-        raiz / "output" / "2026-08" / "Aug Zalazar.xlsx"
-    ).active
-
-    filas_cliente = {r.min_row for r in hoja.merged_cells.ranges}
-    for fila in range(2, hoja.max_row + 1):
-        if fila in filas_cliente:
-            continue
-        suma_dias = round(
-            sum(
-                hoja.cell(row=fila, column=col).value or 0.0
-                for col in range(3, hoja.max_column + 1)
-            ),
-            2,
-        )
-        assert suma_dias == hoja.cell(row=fila, column=2).value, (
-            f"fila {fila} ({hoja.cell(row=fila, column=1).value})"
-        )
-
-
-def test_un_export_con_dos_devs_no_genera_y_queda_en_la_validacion(tmp_path):
-    """Camino completo del defecto Critical: Kimai exportado sin filtrar."""
     from test_lector_kimai import _fila, _xlsx_de_kimai
 
     raiz = preparar(tmp_path, nombres=())
@@ -283,64 +318,93 @@ def test_un_export_con_dos_devs_no_genera_y_queda_en_la_validacion(tmp_path):
         raiz / "input" / "2026-08" / "kimai-mezclado.xlsx",
         [_fila(usuario="mzalazar"), _fila(usuario="zlopez")],
     )
+    assert procesar_mes("2026-08", raiz) == 0
+    hoja = hoja_de(raiz, LIMPIO)
+    assert {hoja.cell(row=f, column=4).value for f in (2, 3)} == {
+        "mzalazar",
+        "zlopez",
+    }
+
+
+# --- El informe describe la CARPETA, no la corrida ---------------------------
+
+
+def test_un_xlsx_ajeno_del_dueno_sobrevive_y_se_nombra_en_el_informe(tmp_path):
+    raiz = preparar(tmp_path)
+    salida = raiz / "output" / "2026-08"
+    salida.mkdir(parents=True, exist_ok=True)
+    ajeno = salida / "NOTAS DEL DUENO.xlsx"
+    ajeno.write_text("notas del dueño", encoding="utf-8")
+
+    assert procesar_mes("2026-08", raiz) == 0
+    assert ajeno.read_text(encoding="utf-8") == "notas del dueño"
+    texto = informe(raiz)
+    assert "NOTAS DEL DUENO.xlsx" in texto
+    assert "NO LOS ENVÍES" in texto
+
+
+def test_los_excel_del_formato_anterior_quedan_listados_como_ajenos(tmp_path):
+    """Los 'Aug Apellido.xlsx' de la época del Excel por desarrollador."""
+    raiz = preparar(tmp_path)
+    salida = raiz / "output" / "2026-08"
+    salida.mkdir(parents=True, exist_ok=True)
+    (salida / "Aug Zalazar.xlsx").write_text("formato viejo", encoding="utf-8")
+
+    assert procesar_mes("2026-08", raiz) == 0
+    texto = informe(raiz)
+    assert "Aug Zalazar.xlsx" in texto
+    assert "formato anterior" in texto
+    assert "Sin avisos." not in texto
+
+
+def test_el_informe_no_confunde_lo_generado_con_lo_ajeno(tmp_path):
+    raiz = preparar(tmp_path)
+    assert procesar_mes("2026-08", raiz) == 0
+    texto = informe(raiz)
+    assert "NO LOS ENVÍES" not in texto
+    assert f"Archivo para el partner: {LIMPIO}" in texto
+
+
+def test_un_apartado_sigue_en_el_informe_en_las_corridas_siguientes(tmp_path):
+    raiz = preparar(tmp_path)
+    assert procesar_mes("2026-08", raiz) == 0
+    (raiz / "input" / "2026-08" / "roto.xlsx").write_text("basura", encoding="utf-8")
     assert procesar_mes("2026-08", raiz) == 1
-    assert list((raiz / "output" / "2026-08").glob("*.xlsx")) == []
 
-    texto = (raiz / "output" / "2026-08" / "_validacion.txt").read_text(
-        encoding="utf-8"
-    )
-    assert "kimai-mezclado.xlsx" in texto
-    assert "mzalazar" in texto and "zlopez" in texto
-    assert "un solo desarrollador" in texto
+    (raiz / "input" / "2026-08" / "roto.xlsx").unlink()
+    assert procesar_mes("2026-08", raiz) == 0
+    texto = informe(raiz)
+    assert "Apartados por la herramienta" in texto
+    assert "CORRIDA ANTERIOR - NO ENVIAR" in texto
 
 
-# --- Regresión: el barrido de output/ dejaba la carpeta a medias ---
-# (defecto Critical: la corrida empezaba borrando todos los .xlsx de
-# output/<mes>/. Un solo Excel abierto abortaba la corrida entera con
-# `return 1` ANTES de reescribir _validacion.txt, así que el informe seguía
-# declarando Excel que ya no estaban. Y se llevaba puesto en silencio
-# cualquier .xlsx ajeno que el dueño hubiera dejado en la carpeta.)
+def test_si_el_archivo_viejo_no_se_puede_apartar_el_informe_lo_dice(
+    tmp_path, monkeypatch
+):
+    raiz = preparar(tmp_path)
+    assert procesar_mes("2026-08", raiz) == 0
 
-MAPEO_DOS_DEVS = (
-    "personas:\n"
-    "  mzalazar:\n"
-    '    nombre: "Matias Zalazar"\n'
-    '    archivo: "Zalazar"\n'
-    "  zlopez:\n"
-    '    nombre: "Zoe Lopez"\n'
-    '    archivo: "Lopez"\n'
-    "proyectos:\n"
-    "  CO2610170:\n"
-    '    cliente: "Aduanas"\n'
-    '    proyecto: "Subastas"\n'
-)
+    def rename_bloqueado(self, destino):
+        raise PermissionError(13, "Acceso denegado")
+
+    (raiz / "input" / "2026-08" / "roto.xlsx").write_text("basura", encoding="utf-8")
+    monkeypatch.setattr(Path, "rename", rename_bloqueado)
+    assert procesar_mes("2026-08", raiz) == 1
+
+    salida = raiz / "output" / "2026-08"
+    assert (salida / LIMPIO).is_file()  # no se pudo mover, sigue ahí
+    texto = informe(raiz)
+    assert "no se pudo apartar" in texto
+    assert "NO lo envíes" in texto
 
 
-def preparar_dos_devs(tmp_path):
-    """input/2026-08/ con un export de cada uno de dos desarrolladores."""
-    from test_lector_kimai import _fila, _xlsx_de_kimai
-
-    raiz = preparar(tmp_path, nombres=())
-    (raiz / "config" / "mapeo.yaml").write_text(MAPEO_DOS_DEVS, encoding="utf-8")
-    entrada = raiz / "input" / "2026-08"
-    _xlsx_de_kimai(entrada / "kimai-lopez.xlsx", [_fila(usuario="zlopez")])
-    _xlsx_de_kimai(entrada / "kimai-zalazar.xlsx", [_fila(usuario="mzalazar")])
-    return raiz
-
-
-def test_un_excel_no_reemplazable_no_aborta_la_corrida(tmp_path):
-    """El bloqueo de un destino es fallo de ESE archivo, no de la corrida."""
-    raiz = preparar_dos_devs(tmp_path)
+def test_un_destino_de_solo_lectura_no_deja_un_archivo_a_medias(tmp_path):
+    raiz = preparar(tmp_path)
     salida = raiz / "output" / "2026-08"
     assert procesar_mes("2026-08", raiz) == 0
-    assert (salida / "Aug Lopez.xlsx").is_file()
-    assert (salida / "Aug Zalazar.xlsx").is_file()
+    previo = (salida / LIMPIO).read_bytes()
 
-    # Segunda corrida con uno de los dos destinos de sólo lectura: os.replace
-    # sobre él falla con PermissionError, igual que con el Excel abierto.
-    bloqueado = salida / "Aug Lopez.xlsx"
-    contenido_previo = bloqueado.read_bytes()
-    bloqueado.chmod(stat.S_IREAD)
+    (salida / LIMPIO).chmod(stat.S_IREAD)
     try:
         codigo = procesar_mes("2026-08", raiz)
     finally:
@@ -348,237 +412,12 @@ def test_un_excel_no_reemplazable_no_aborta_la_corrida(tmp_path):
             archivo.chmod(stat.S_IWRITE | stat.S_IREAD)
 
     assert codigo == 1
-    # El otro desarrollador se generó igual: la corrida no abortó.
-    assert (salida / "Aug Zalazar.xlsx").is_file()
-    # El Excel bloqueado no se pisó a medias: se apartó entero, byte por byte.
-    apartado = salida / "Aug Lopez (CORRIDA ANTERIOR - NO ENVIAR).xlsx"
-    assert apartado.read_bytes() == contenido_previo
-
-    texto = (salida / "_validacion.txt").read_text(encoding="utf-8")
-    # El informe describe exactamente lo que quedó en la carpeta.
-    assert "1 Excel generado/s" in texto
-    assert "  - Aug Zalazar.xlsx" in texto
-    assert "kimai-lopez.xlsx" in texto
-    assert "NO GENERADO" in texto
-    en_carpeta = {p.name for p in salida.glob("*.xlsx")}
-    assert "Aug Zalazar.xlsx" in en_carpeta
-    assert "Aug Lopez.xlsx" not in en_carpeta
-
-
-def test_no_quedan_temporales_despues_de_una_corrida(tmp_path):
-    raiz = preparar(tmp_path)
-    procesar_mes("2026-08", raiz)
-    salida = raiz / "output" / "2026-08"
-    assert [p.name for p in salida.glob("~tmp-*")] == []
-
-
-def test_un_xlsx_ajeno_del_dueno_sobrevive_a_la_corrida(tmp_path):
-    """La herramienta sólo puede tocar el destino que ella misma genera.
-
-    El barrido por glob borraba en silencio cualquier .xlsx que el dueño
-    hubiera dejado en la carpeta del mes.
-    """
-    raiz = preparar(tmp_path)
-    salida = raiz / "output" / "2026-08"
-    salida.mkdir(parents=True, exist_ok=True)
-    ajeno = salida / "NOTAS DEL DUENO.xlsx"
-    ajeno.write_text("notas del dueño", encoding="utf-8")
-
-    assert procesar_mes("2026-08", raiz) == 0
-    assert ajeno.is_file()
-    assert ajeno.read_text(encoding="utf-8") == "notas del dueño"
-
-
-def test_un_xlsx_ajeno_sobrevive_tambien_a_una_corrida_fallida(tmp_path):
-    raiz = preparar(tmp_path)
-    salida = raiz / "output" / "2026-08"
-    salida.mkdir(parents=True, exist_ok=True)
-    ajeno = salida / "NOTAS DEL DUENO.xlsx"
-    ajeno.write_text("notas del dueño", encoding="utf-8")
-
-    (raiz / "config" / "mapeo.yaml").write_text(
-        MAPEO_SIN_UN_PROYECTO, encoding="utf-8"
-    )
-    assert procesar_mes("2026-08", raiz) == 1
-    assert ajeno.is_file()
-
-
-def test_la_validacion_nombra_el_excel_viejo_que_se_aparto(tmp_path):
-    """El informe tiene que decir qué pasó con el Excel de la corrida anterior."""
-    raiz = corrida_fallida_despues_de_una_exitosa(tmp_path)
-    texto = (raiz / "output" / "2026-08" / "_validacion.txt").read_text(
-        encoding="utf-8"
-    )
-    assert "CORRIDA ANTERIOR - NO ENVIAR" in texto
-
-
-def test_si_el_excel_viejo_no_se_puede_apartar_el_informe_lo_dice(
-    tmp_path, monkeypatch
-):
-    """Si ni siquiera se puede renombrar, sigue siendo fallo de ese archivo."""
-    raiz = preparar(tmp_path)
-    assert procesar_mes("2026-08", raiz) == 0
-
-    def rename_bloqueado(self, destino):
-        raise PermissionError(13, "Acceso denegado")
-
-    (raiz / "config" / "mapeo.yaml").write_text(
-        MAPEO_SIN_UN_PROYECTO, encoding="utf-8"
-    )
-    monkeypatch.setattr(Path, "rename", rename_bloqueado)
-    assert procesar_mes("2026-08", raiz) == 1
-
-    texto = (raiz / "output" / "2026-08" / "_validacion.txt").read_text(
-        encoding="utf-8"
-    )
-    assert "no se pudo apartar" in texto
-    assert "NO lo envíes" in texto
-
-
-def test_un_export_entero_fuera_del_mes_no_genera_un_excel_en_blanco(
-    tmp_path, capsys
-):
-    """Defecto: 0.0 h, código de salida 0 y ningún aviso.
-
-    Mismo disparador que el export vacío (el rango de fechas mal puesto en
-    Kimai) por otro camino: el export trae registros, pero todos caen fuera
-    del mes que se está generando. El dueño le mandaba al cliente un reporte
-    en blanco sin que nada le avisara.
-    """
-    raiz = preparar(tmp_path)
-    # El fixture es de agosto 2026; lo procesamos como septiembre.
-    septiembre = raiz / "input" / "2026-09"
-    septiembre.mkdir(parents=True)
-    shutil.copy(FIXTURES / "kimai-mzalazar.xlsx", septiembre / "kimai-mzalazar.xlsx")
-
-    assert procesar_mes("2026-09", raiz) == 1
-    salida = raiz / "output" / "2026-09"
-    assert list(salida.glob("*.xlsx")) == []
-
-    texto = (salida / "_validacion.txt").read_text(encoding="utf-8")
-    assert "NO GENERADO" in texto
-    assert "kimai-mzalazar.xlsx" in texto
-    assert "2026-09" in texto  # el mes que se pidió
-    assert "se descartaron por fecha" in texto
-    assert "/8/2026" in texto  # el rango de fechas que sí trae el export
-    assert "otro rango de fechas" in texto
-    assert "otro mes" in texto
-    assert "0.0 h" not in capsys.readouterr().out
-
-
-# --- Regresión: el informe describe la CARPETA, no la corrida ---
-# (defecto Critical, tercera reincidencia en la misma zona: _validacion.txt
-# enumeraba lo que la corrida había hecho, pero el dueño envía lo que hay en
-# output/<mes>/. Todo .xlsx que quedara ahí sin ser de esta corrida —el Excel
-# huérfano de un dev que ya no está en input/, un apartado de hace tres
-# corridas, un archivo propio del dueño— viajaba al cliente sin que el informe
-# lo nombrara, incluso en corridas con "Sin avisos." y código de salida 0.)
-
-
-def test_un_excel_huerfano_de_una_corrida_anterior_se_nombra_en_el_informe(
-    tmp_path,
-):
-    """El caso vivo: el dev se fue y su export ya no está en input/.
-
-    Su Excel del mes pasado sigue en output/ con el nombre correcto del mes y
-    sin ninguna marca. La corrida es un éxito total y no lo menciona.
-    """
-    raiz = preparar_dos_devs(tmp_path)
-    salida = raiz / "output" / "2026-08"
-    assert procesar_mes("2026-08", raiz) == 0
-    assert (salida / "Aug Lopez.xlsx").is_file()
-
-    # Lopez se fue de la empresa: su export ya no está en input/.
-    (raiz / "input" / "2026-08" / "kimai-lopez.xlsx").unlink()
-    assert procesar_mes("2026-08", raiz) == 0
-
-    # El Excel viejo sigue en la carpeta: la herramienta nunca borra.
-    assert (salida / "Aug Lopez.xlsx").is_file()
-    texto = (salida / "_validacion.txt").read_text(encoding="utf-8")
-    assert "Aug Lopez.xlsx" in texto
-    assert "NO LOS ENVÍES" in texto
-    assert "NO generó" in texto
-    # Y el informe no puede cerrar con un "Sin avisos." tranquilizador.
-    assert "Sin avisos." not in texto
-
-
-def test_el_informe_nombra_los_huerfanos_tambien_en_una_corrida_exitosa(
-    tmp_path, capsys
-):
-    """Código 0 y ningún aviso: el camino donde el defecto era peor."""
-    raiz = preparar(tmp_path)
-    salida = raiz / "output" / "2026-08"
-    salida.mkdir(parents=True, exist_ok=True)
-    (salida / "Aug Lopez.xlsx").write_text("excel viejo", encoding="utf-8")
-
-    assert procesar_mes("2026-08", raiz) == 0
-    texto = (salida / "_validacion.txt").read_text(encoding="utf-8")
-    assert "Aug Lopez.xlsx" in texto
-    assert "NO LOS ENVÍES" in texto
-    assert "1 Excel generado/s" in texto
-    assert "NO generó" in capsys.readouterr().out
-
-
-def test_un_apartado_sigue_en_el_informe_en_las_corridas_siguientes(tmp_path):
-    """El apartado no desaparece del informe mientras no desaparezca del disco."""
-    raiz = corrida_fallida_despues_de_una_exitosa(tmp_path)
-    salida = raiz / "output" / "2026-08"
-    apartado = "Aug Zalazar (CORRIDA ANTERIOR - NO ENVIAR).xlsx"
-    assert (salida / apartado).is_file()
-
-    # Tercera corrida, esta vez sin errores: el apartado sigue ahí.
-    shutil.copy(FIXTURES / "mapeo-test.yaml", raiz / "config" / "mapeo.yaml")
-    assert procesar_mes("2026-08", raiz) == 0
-
-    assert (salida / apartado).is_file()
-    texto = (salida / "_validacion.txt").read_text(encoding="utf-8")
-    assert apartado in texto
-    assert "Apartados por la herramienta" in texto
-    assert "NO LOS ENVÍES" in texto
-
-
-def test_un_xlsx_ajeno_del_dueno_se_nombra_en_el_informe(tmp_path):
-    """No se borra (nunca), pero tampoco se calla: se envía la carpeta entera."""
-    raiz = preparar(tmp_path)
-    salida = raiz / "output" / "2026-08"
-    salida.mkdir(parents=True, exist_ok=True)
-    ajeno = salida / "NOTAS DEL DUENO.xlsx"
-    ajeno.write_text("notas del dueño", encoding="utf-8")
-
-    assert procesar_mes("2026-08", raiz) == 0
-    assert ajeno.is_file()
-    texto = (salida / "_validacion.txt").read_text(encoding="utf-8")
-    assert "NOTAS DEL DUENO.xlsx" in texto
-    assert "NO LOS ENVÍES" in texto
-
-
-def test_el_informe_no_confunde_lo_generado_con_lo_ajeno(tmp_path):
-    """Lo que esta corrida sí generó no puede aparecer como archivo de más."""
-    raiz = preparar(tmp_path)
-    assert procesar_mes("2026-08", raiz) == 0
-    texto = (raiz / "output" / "2026-08" / "_validacion.txt").read_text(
-        encoding="utf-8"
-    )
-    assert "NO LOS ENVÍES" not in texto
-    assert "no son de esta corrida" not in texto
-    assert "  - Aug Zalazar.xlsx" in texto
-
-
-def test_el_desvio_por_redondeo_se_informa_siempre(tmp_path):
-    """Dato de facturación: está aunque no supere el umbral ni haya avisos."""
-    raiz = preparar(tmp_path)
-    procesar_mes("2026-08", raiz)
-    texto = (raiz / "output" / "2026-08" / "_validacion.txt").read_text(
-        encoding="utf-8"
-    )
-    assert "--- Datos de los Excel generados ---" in texto
-    assert "Desvío por redondeo" in texto
+    assert (salida / LIMPIO).read_bytes() == previo
 
 
 def test_si_no_se_puede_escribir_el_informe_va_a_un_archivo_alternativo(
     tmp_path, capsys, monkeypatch
 ):
-    """El _validacion.txt viejo describe otra corrida: no puede quedar solo."""
     raiz = preparar(tmp_path)
     assert procesar_mes("2026-08", raiz) == 0
     salida = raiz / "output" / "2026-08"
@@ -599,11 +438,70 @@ def test_si_no_se_puede_escribir_el_informe_va_a_un_archivo_alternativo(
     ]
     assert len(alternativos) == 1
     assert "NO SE PUDO ESCRIBIR" in alternativos[0].name
-    assert alternativos[0].read_text(encoding="utf-8").startswith(
-        "Corrida de output/2026-08/"
-    )
-    # El viejo sigue en disco intacto, y la consola avisa cuál hay que leer.
     assert (salida / "_validacion.txt").read_text(encoding="utf-8") == viejo
-    consola = capsys.readouterr().out
-    assert "no se pudo escribir" in consola
-    assert "de una corrida anterior" in consola
+    assert "no se pudo escribir" in capsys.readouterr().out
+
+
+# --- Punta a punta sobre los cinco exports reales de input/2026-08/ ----------
+
+
+def test_punta_a_punta_con_los_cinco_exports_reales(tmp_path):
+    """Los cinco archivos que el dueño exportó de verdad para agosto de 2026.
+
+    Tres son el reporte de detalle y entran; dos son el resumen mensual, que
+    ya no alcanza. El archivo tiene que traer exactamente las horas de los
+    tres, y el nombre tiene que decir que faltan los otros dos.
+    """
+    entrada_real = RAIZ / "input" / "2026-08"
+    (tmp_path / "config").mkdir()
+    shutil.copy(RAIZ / "config" / "mapeo.yaml", tmp_path / "config" / "mapeo.yaml")
+    shutil.copytree(entrada_real, tmp_path / "input" / "2026-08")
+
+    assert procesar_mes("2026-08", tmp_path) == 1
+
+    detallados = ["franco.csv", "luciano.xlsx", "matias.xlsx"]
+    resumidos = ["alexis.xlsx", "lautaro.xlsx"]
+    assert sorted(p.name for p in entrada_real.iterdir()) == sorted(
+        detallados + resumidos
+    )
+
+    esperadas = (
+        sum(round(r.horas * 3600) for n in detallados for r in leer(entrada_real / n))
+        / 3600
+    )
+
+    hoja = hoja_de(tmp_path, incompleto(2))
+    assert horas_de(hoja) == esperadas == 147.0
+    assert hoja.max_row - 1 == 47
+
+    nombres = {hoja.cell(row=f, column=3).value for f in range(2, hoja.max_row + 1)}
+    assert nombres == {"Franco Dodera", "Luciano Carducci", "Matias Zalazar"}
+
+    # Y lo que falta es exactamente lo de los dos resúmenes mensuales.
+    faltantes = sum(
+        r.horas
+        for n in resumidos
+        for r in leer_resumen_mensual(entrada_real / n, leer_hoja(entrada_real / n))
+    )
+    assert faltantes == 159.0
+    texto = informe(tmp_path)
+    for nombre in resumidos:
+        assert nombre in texto
+    assert "resumen mensual" in texto
+
+
+def test_punta_a_punta_el_project_number_de_luciano_es_210(tmp_path):
+    """El caso que distingue el Project number del código entre corchetes."""
+    (tmp_path / "config").mkdir()
+    shutil.copy(RAIZ / "config" / "mapeo.yaml", tmp_path / "config" / "mapeo.yaml")
+    (tmp_path / "input" / "2026-08").mkdir(parents=True)
+    shutil.copy(
+        RAIZ / "input" / "2026-08" / "luciano.xlsx",
+        tmp_path / "input" / "2026-08" / "luciano.xlsx",
+    )
+
+    assert procesar_mes("2026-08", tmp_path) == 0
+    hoja = hoja_de(tmp_path, LIMPIO)
+    numeros = {hoja.cell(row=f, column=10).value for f in range(2, hoja.max_row + 1)}
+    assert numeros == {"210"}
+    assert "AD2690002" not in numeros

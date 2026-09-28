@@ -284,3 +284,55 @@ def test_actividad_vacia_o_no_textual_falla(tmp_path, valor):
     mensaje = str(excepcion.value)
     assert "actividad:" in mensaje
     assert "Desarrollo" in mensaje
+
+
+# --- 'personas:' dejó de ser obligatorio ------------------------------------
+# El archivo que recibe el partner trae el nombre, el usuario y el mail de
+# cada desarrollador tal como vienen de Kimai: el mapeo ya no los necesita.
+
+
+def test_el_mapeo_carga_sin_la_seccion_personas(tmp_path):
+    ruta = tmp_path / "sin-personas.yaml"
+    ruta.write_text(
+        'proyectos:\n  AB123:\n    cliente: "Cliente"\n    proyecto: "Proyecto"\n',
+        encoding="utf-8",
+    )
+    mapeo = Mapeo.cargar(ruta)
+    assert mapeo.proyecto_opcional("AB123").proyecto == "Proyecto"
+
+
+def test_un_proyecto_sin_declarar_devuelve_none_en_vez_de_frenar(tmp_path):
+    ruta = tmp_path / "sin-personas.yaml"
+    ruta.write_text("proyectos:\n", encoding="utf-8")
+    assert Mapeo.cargar(ruta).proyecto_opcional("NO-ESTA") is None
+
+
+# --- El nombre del archivo que recibe el partner ----------------------------
+
+
+def test_el_patron_del_archivo_de_salida_tiene_un_valor_por_defecto(tmp_path):
+    ruta = tmp_path / "m.yaml"
+    ruta.write_text("proyectos:\n", encoding="utf-8")
+    assert Mapeo.cargar(ruta).archivo_salida == "Horas KLG-{mes}{anio}.xlsx"
+
+
+def test_el_patron_del_archivo_de_salida_se_puede_cambiar(tmp_path):
+    ruta = tmp_path / "m.yaml"
+    ruta.write_text(
+        'proyectos:\narchivo_salida: "Horas KLG-Sept{anio}.xlsx"\n', encoding="utf-8"
+    )
+    assert Mapeo.cargar(ruta).archivo_salida == "Horas KLG-Sept{anio}.xlsx"
+
+
+def test_un_patron_con_un_reemplazo_inventado_falla_en_espanol(tmp_path):
+    ruta = tmp_path / "m.yaml"
+    ruta.write_text('proyectos:\narchivo_salida: "Horas {dia}.xlsx"\n', encoding="utf-8")
+    with pytest.raises(ErrorMapeo, match=r"\{mes\} y \{anio\}"):
+        Mapeo.cargar(ruta)
+
+
+def test_un_patron_que_no_termina_en_xlsx_falla_en_espanol(tmp_path):
+    ruta = tmp_path / "m.yaml"
+    ruta.write_text('proyectos:\narchivo_salida: "Horas {mes}"\n', encoding="utf-8")
+    with pytest.raises(ErrorMapeo, match="terminar en .xlsx"):
+        Mapeo.cargar(ruta)

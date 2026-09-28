@@ -1,21 +1,56 @@
-"""Orquestación: de los exports de input/<mes>/ a output/<mes>/*.xlsx."""
+"""Orquestación: de los exports de input/<mes>/ al archivo del partner.
+
+El entregable es **uno solo por mes**: `output/<mes>/Horas KLG-<Mes><Año>.xlsx`,
+con el detalle plano de todos los desarrolladores juntos.
+
+Ese cambio trae un riesgo que el formato anterior no tenía. Antes, si el
+archivo de un desarrollador fallaba, faltaba un Excel entero en la carpeta:
+imposible no notarlo. Ahora todo va en un solo archivo, así que **un
+desarrollador que falta es invisible**: el archivo se ve completo y no lo es.
+
+Por eso, cuando algún export falla:
+
+- el consolidado **se genera igual** con los que sí se pudieron leer, porque
+  no generarlo dejaría al dueño sin nada y sin forma de revisar;
+- pero sale con la marca de incompleto en el **nombre del archivo**, que es lo
+  único que el dueño ve cuando lo adjunta a un mail;
+- y el archivo limpio que hubiera quedado de una corrida anterior se aparta,
+  para que no se pueda enviar en su lugar.
+
+El escritor pivoteado por desarrollador (`escritor_excel.py`) y su plantilla
+siguen en el repo, probados, pero este CLI ya no los llama.
+"""
 from __future__ import annotations
 
 import os
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
-from cunix_horas.agregador import Reporte, agregar, resolver_identidad
-from cunix_horas.escritor_excel import escribir, nombre_de_archivo_de
-from cunix_horas.lector_kimai import EXTENSIONES_DE_ENTRADA, ErrorLectura, leer
+from cunix_horas.detalle import Detalle, construir, nombre_para_mostrar, segundos_de
+from cunix_horas.escritor_detalle import (
+    ErrorIntegridad,
+    escribir_detalle,
+    nombre_de_archivo,
+    nombre_incompleto,
+    verificar_integridad,
+)
+from cunix_horas.lector_kimai import (
+    EXTENSIONES_DE_ENTRADA,
+    ErrorLectura,
+    Registro,
+    leer,
+)
 from cunix_horas.mapeo import ErrorMapeo, Mapeo
-from cunix_horas.validador import dato_de_desvio, validar
+from cunix_horas.validador import avisos_de_desarrollador
 
 FORMATO_MES = re.compile(r"^(\d{4})-(\d{2})$")
 
-# Marca del Excel que quedó de una corrida anterior y que esta corrida no pudo
-# reemplazar. Va en el nombre para que sea imposible confundirlo con el del mes.
+SEGUNDOS_POR_HORA = 3600
+
+# Marca del archivo que quedó de una corrida anterior y que esta corrida no
+# pudo reemplazar. Va en el nombre para que no se confunda con el del mes.
 SUFIJO_CORRIDA_ANTERIOR = " (CORRIDA ANTERIOR - NO ENVIAR)"
 
 NOMBRE_INFORME = "_validacion.txt"
@@ -24,6 +59,15 @@ NOMBRE_INFORME = "_validacion.txt"
 # otra corrida y describe otra carpeta. El informe de esta corrida va
 # entonces a este otro nombre, que dice en la cara cuál hay que leer.
 NOMBRE_INFORME_ALTERNATIVO = "_validacion (NO SE PUDO ESCRIBIR _validacion.txt - LEER ESTE).txt"
+
+
+@dataclass(frozen=True)
+class Leido:
+    """Un export que se pudo leer, ya separado en registros del mes y de fuera."""
+
+    archivo: str
+    del_mes: tuple[Registro, ...]
+    descartados: tuple[Registro, ...]
 
 
 def _reconfigurar_salida_utf8() -> None:
@@ -56,19 +100,61 @@ def _parsear_mes(mes: str) -> tuple[int, int]:
     return anio, numero
 
 
-def _escribir_atomico(reporte: Reporte, plantilla: Path, destino: Path) -> None:
-    """Genera el Excel en un temporal y recién ahí lo mueve sobre `destino`.
+def _separar_por_mes(
+    registros: list[Registro], anio: int, mes: int
+) -> tuple[list[Registro], list[Registro]]:
+    del_mes = [r for r in registros if (r.fecha.year, r.fecha.month) == (anio, mes)]
+    fuera = [r for r in registros if (r.fecha.year, r.fecha.month) != (anio, mes)]
+    return del_mes, fuera
+
+
+def _error_de_export_vacio(archivo: str) -> str:
+    return (
+        f"Export sin ningún registro de horas en {archivo}: el archivo tiene "
+        f"los encabezados de Kimai pero ninguna fila de datos.\n"
+        f"  Revisá el rango de fechas del export en Kimai: lo más probable es "
+        f"que esté puesto en un período sin horas cargadas.\n"
+        f"  Volvé a exportar el mes que querés generar y reemplazá el archivo."
+    )
+
+
+def _error_de_mes_equivocado(
+    descartados: list[Registro], anio: int, mes: int, archivo: str
+) -> str:
+    fechas = sorted(r.fecha for r in descartados)
+    primera, ultima = fechas[0], fechas[-1]
+    return (
+        f"Ningún registro del export cae dentro de {anio}-{mes:02d} en {archivo}: "
+        f"los {len(descartados)} registros del archivo se descartaron por fecha.\n"
+        f"  Las fechas del export van del {primera.day}/{primera.month}/{primera.year} "
+        f"al {ultima.day}/{ultima.month}/{ultima.year}.\n"
+        f"  Lo más probable es que el export se haya hecho con otro rango de fechas, "
+        f"o que corresponda a otro mes del que estás generando.\n"
+        f"  Volvé a exportar {anio}-{mes:02d} desde Kimai, o generá el mes que "
+        f"realmente trae el archivo."
+    )
+
+
+def _escribir_atomico(
+    detalle: Detalle, destino: Path, segundos_esperados: int
+) -> None:
+    """Genera el archivo en un temporal y recién ahí lo mueve sobre `destino`.
+
+    La verificación de integridad corre sobre el temporal, **antes** del
+    `os.replace`: si lo escrito no tiene las mismas horas que los exports, no
+    llega a ocupar el nombre bueno.
 
     `os.replace` es atómico y pisa el destino existente, así que nunca hay una
-    ventana en la que `destino` sea un Excel a medio escribir, y una falla
-    durante la generación no toca el archivo que ya estaba.
+    ventana en la que `destino` sea un archivo a medio escribir, y una falla
+    durante la generación no toca el que ya estaba.
 
     El temporal vive en la misma carpeta que el destino: mover entre volúmenes
     no es atómico.
     """
     temporal = destino.with_name(f"~tmp-{os.getpid()}-{destino.name}")
     try:
-        escribir(reporte, plantilla, temporal)
+        escribir_detalle(detalle, temporal)
+        verificar_integridad(temporal, segundos_esperados)
         os.replace(temporal, destino)
     finally:
         try:
@@ -78,10 +164,10 @@ def _escribir_atomico(reporte: Reporte, plantilla: Path, destino: Path) -> None:
 
 
 def _apartar_excel_previo(destino: Path) -> str:
-    """Saca de en medio el Excel viejo que haya con el nombre `destino`.
+    """Saca de en medio el archivo viejo que haya con el nombre `destino`.
 
-    Se llama cuando un archivo de entrada falló y su Excel NO se generó. Si en
-    output/ quedó el del mes pasado con ese mismo nombre, no puede seguir ahí
+    Se llama cuando el archivo limpio del mes NO se generó: si en output/ quedó
+    el de una corrida anterior con ese mismo nombre, no puede seguir ahí
     haciéndose pasar por el de esta corrida. Se lo renombra en vez de borrarlo:
     el dato sigue estando por si el dueño lo necesita, pero el nombre ya no
     engaña.
@@ -106,7 +192,7 @@ def _apartar_excel_previo(destino: Path) -> str:
         return (
             f"\n  OJO: en output/ quedó {destino.name} de una corrida anterior "
             f"y no se pudo apartar (permiso denegado; es probable que lo tengas "
-            f"abierto). NO lo envíes: no es el Excel de esta corrida."
+            f"abierto). NO lo envíes: no es el archivo de esta corrida."
         )
     return (
         f"\n  El {destino.name} que había quedado de una corrida anterior se "
@@ -121,10 +207,11 @@ def _xlsx_que_esta_corrida_no_genero(
     """Los .xlsx que están en output/<mes>/ y NO salieron de esta corrida.
 
     El dueño no envía lo que hizo la corrida: envía lo que hay en la carpeta.
-    Todo .xlsx que quede ahí sin que esta corrida lo haya generado —el Excel
-    huérfano de un dev que ya no está en input/, uno apartado hace tres
-    corridas, un archivo que el dueño dejó a mano— se le va adjunto al cliente
-    si nadie se lo nombra. Por eso el informe mira el disco, no la corrida.
+    Todo .xlsx que quede ahí sin que esta corrida lo haya generado —los Excel
+    por desarrollador del formato anterior, un consolidado incompleto de hace
+    tres corridas, un archivo que el dueño dejó a mano— se le va adjunto al
+    cliente si nadie se lo nombra. Por eso el informe mira el disco, no la
+    corrida.
 
     Se ignoran los temporales: no son archivos del dueño y no sobreviven.
     """
@@ -169,82 +256,171 @@ def _seccion_de_ajenos(mes: str, ajenos: list[str]) -> list[str]:
         lineas.extend(f"  - {nombre}" for nombre in otros)
         lineas.append("")
         lineas.append(
-            "Si alguno es el Excel de un desarrollador que este mes ya no "
-            "tiene su export en input/, está viejo: borralo o movelo fuera de "
-            "la carpeta antes de armar el envío."
+            "Si alguno es un Excel del formato anterior (uno por "
+            "desarrollador) o un consolidado marcado como INCOMPLETO, está "
+            "viejo: borralo o movelo fuera de la carpeta antes de armar el "
+            "envío."
         )
     lineas.append("")
     return lineas
 
 
+def _horas(segundos: int) -> float:
+    return segundos / SEGUNDOS_POR_HORA
+
+
+def _seccion_de_desarrolladores(leidos: list[Leido]) -> list[str]:
+    """Quiénes entraron al archivo, con cuántos registros y cuántas horas.
+
+    Va arriba de todo: es lo primero que el dueño tiene que poder contar
+    contra la lista de su equipo antes de mandar nada.
+    """
+    entradas: list[tuple[str, str, int, int]] = []
+    for leido in leidos:
+        por_nombre: dict[str, list[Registro]] = {}
+        for registro in leido.del_mes:
+            por_nombre.setdefault(nombre_para_mostrar(registro), []).append(registro)
+        for nombre in sorted(por_nombre, key=lambda n: (n.casefold(), n)):
+            registros = por_nombre[nombre]
+            entradas.append(
+                (
+                    nombre,
+                    leido.archivo,
+                    len(registros),
+                    sum(segundos_de(r.horas) for r in registros),
+                )
+            )
+
+    entradas.sort(key=lambda e: (e[0].casefold(), e[0], e[1]))
+    lineas = [f"{len(entradas)} desarrollador/es en el archivo:"]
+    if not entradas:
+        lineas.append("  (ninguno)")
+    lineas.extend(
+        f"  - {nombre} ({archivo}): {cantidad} registro/s, "
+        f"{_horas(segundos):.2f} h"
+        for nombre, archivo, cantidad, segundos in entradas
+    )
+    lineas.append("")
+    return lineas
+
+
+def _seccion_de_faltantes(no_leidos: list[tuple[str, str]]) -> list[str]:
+    """Los exports que no entraron, con el motivo de cada uno."""
+    if not no_leidos:
+        return []
+    lineas = [
+        f"{len(no_leidos)} archivo/s de input/ que NO entraron. "
+        "AL ARCHIVO LE FALTAN ESOS DESARROLLADORES:"
+    ]
+    for entrada, motivo in no_leidos:
+        lineas.append(f"  - {entrada}:")
+        lineas.extend(f"    {linea}" for linea in motivo.splitlines())
+    lineas.append("")
+    lineas.append(
+        "El archivo de este mes salió con la marca de INCOMPLETO en el "
+        "nombre. NO lo envíes así: corregí lo de arriba y volvé a correr. "
+        "Si lo mandás igual, el partner factura de menos y nada adentro del "
+        "archivo lo delata."
+    )
+    lineas.append("")
+    return lineas
+
+
+def _seccion_de_sin_mapear(detalle: Detalle) -> list[str]:
+    """Los proyectos que salieron con el nombre derivado de Kimai."""
+    if not detalle.sin_mapear:
+        return []
+    lineas = [
+        "--- Proyectos sin mapear ---",
+        "",
+        "No frenan nada: cada fila lleva su Project number y el proyecto salió "
+        "con el nombre que trae Kimai. Si querés que el partner vea otro "
+        "nombre, pegá esto en config/mapeo.yaml bajo proyectos: y ajustalo.",
+        "",
+    ]
+    for proyecto in detalle.sin_mapear:
+        lineas.append(f"  {proyecto.codigo}:")
+        lineas.append(f'    cliente: "{proyecto.cliente}"')
+        lineas.append(f'    proyecto: "{proyecto.proyecto}"')
+    lineas.append("")
+    return lineas
+
+
+def _avisos_de_numeros_ambiguos(detalle: Detalle) -> list[str]:
+    """Un mismo Project number con más de un nombre de proyecto en el mes."""
+    return [
+        f"El Project number {numero} aparece con {len(nombres)} nombres de "
+        f"proyecto distintos: {', '.join(nombres)}. El partner ve dos nombres "
+        f"para lo mismo. Lo más probable es que alguien haya renombrado el "
+        f"proyecto en Kimai a mitad de mes; si querés un solo nombre, "
+        f"declaralo en config/mapeo.yaml bajo proyectos:."
+        for numero, nombres in detalle.numeros_ambiguos
+    ]
+
+
 def _resumen_de_validacion(
     mes: str,
-    generados: list[str],
-    no_generados: list[tuple[str, str]],
+    leidos: list[Leido],
+    no_leidos: list[tuple[str, str]],
+    detalle: Detalle | None,
+    generado: str | None,
+    nota_de_apartado: str,
     ajenos: list[str],
-    datos: list[str],
-    avisos: list[str],
+    avisos_generales: list[str],
+    avisos_por_dev: list[str],
 ) -> str:
-    """Arma el contenido de _validacion.txt: primero el estado de la carpeta.
+    """Arma el contenido de _validacion.txt.
 
     Este archivo es el informe que el dueño lee antes de mandar nada, así que
-    tiene que alcanzar por sí solo para decidir. Nunca puede decir "Sin
-    avisos." si hubo archivos que no se generaron, y nunca puede callar un
-    .xlsx que está en la carpeta sin ser de esta corrida: el dueño adjunta la
-    carpeta, no la corrida.
+    tiene que alcanzar por sí solo para decidir. Arriba de todo va quién entró
+    al archivo y quién no: con todos los desarrolladores en un solo Excel, esa
+    lista es lo único que distingue un envío completo de uno que no lo es.
     """
     lineas: list[str] = [f"Corrida de output/{mes}/", ""]
 
-    lineas.append(f"{len(generados)} Excel generado/s:")
-    lineas.extend(f"  - {nombre}" for nombre in generados)
-    if not generados:
-        lineas.append("  (ninguno)")
-    lineas.append("")
+    lineas.extend(_seccion_de_desarrolladores(leidos))
+    lineas.extend(_seccion_de_faltantes(no_leidos))
 
-    if no_generados:
+    if generado is not None and detalle is not None:
+        lineas.append(f"Archivo para el partner: {generado}")
         lineas.append(
-            f"{len(no_generados)} archivo/s NO GENERADO/S. "
-            "Esos Excel NO están en esta carpeta:"
+            f"  {len(detalle.filas)} fila/s, {detalle.horas:.2f} h en total."
         )
-        for entrada, motivo in no_generados:
-            lineas.append(f"  - {entrada}:")
-            lineas.extend(f"    {linea}" for linea in motivo.splitlines())
-        lineas.append("")
-        lineas.append(
-            "Corregí lo de arriba y volvé a correr ANTES de enviar nada: faltan "
-            "los Excel listados como NO GENERADOS, y los que sí están cubren "
-            "sólo a los desarrolladores listados como generados."
-        )
-        lineas.append("")
+    else:
+        lineas.append("NO SE GENERÓ NINGÚN ARCHIVO para el partner.")
+    if nota_de_apartado:
+        lineas.extend(nota_de_apartado.strip("\n").splitlines())
+    lineas.append("")
 
     lineas.extend(_seccion_de_ajenos(mes, ajenos))
 
-    if datos:
-        lineas.append("--- Datos de los Excel generados ---")
-        lineas.append("")
-        lineas.extend(datos)
+    if detalle is not None:
+        lineas.extend(_seccion_de_sin_mapear(detalle))
 
-    lineas.append("--- Avisos de validación de los Excel generados ---")
+    lineas.append("--- Avisos de validación ---")
     lineas.append("")
-    if avisos:
-        lineas.extend(avisos)
-    elif no_generados:
-        # Nunca "Sin avisos." a secas cuando hubo errores: sería el mensaje
-        # más tranquilizador posible al lado de una corrida que falló.
-        lineas.append(
-            "Ningún aviso sobre los Excel que sí se generaron, pero la corrida "
-            "NO está completa: mirá la lista de NO GENERADOS de arriba."
-        )
-    elif ajenos:
-        # Mismo criterio con los archivos ajenos: el resumen final no puede
-        # sonar a "está todo listo para enviar" si la carpeta tiene de más.
-        lineas.append(
-            "Ningún aviso sobre los Excel generados, pero la carpeta tiene "
-            f"{len(ajenos)} .xlsx que no son de esta corrida: mirá la lista de "
-            "arriba antes de armar el envío."
-        )
-    else:
-        lineas.append("Sin avisos.")
+    if avisos_generales:
+        lineas.extend(f"  {a}" for a in avisos_generales)
+        lineas.append("")
+    if avisos_por_dev:
+        lineas.extend(avisos_por_dev)
+    elif not avisos_generales:
+        if no_leidos:
+            # Nunca "Sin avisos." a secas cuando faltó alguien: sería el
+            # mensaje más tranquilizador posible al lado de un envío al que
+            # le faltan desarrolladores.
+            lineas.append(
+                "Ningún aviso sobre los desarrolladores que sí entraron, pero "
+                "el archivo NO está completo: mirá la lista de arriba."
+            )
+        elif ajenos:
+            lineas.append(
+                "Ningún aviso sobre el archivo generado, pero la carpeta tiene "
+                f"{len(ajenos)} .xlsx que no son de esta corrida: mirá la lista "
+                "de arriba antes de armar el envío."
+            )
+        else:
+            lineas.append("Sin avisos.")
     return "\n".join(lineas).rstrip("\n") + "\n"
 
 
@@ -281,6 +457,63 @@ def _escribir_informe(carpeta_salida: Path, mes: str, contenido: str) -> bool:
     return False
 
 
+def _avisos_agrupados_por_dev(
+    leidos: list[Leido], anio: int, mes: int
+) -> tuple[list[str], int]:
+    """Los avisos de cada persona, bajo su nombre, en un solo informe."""
+    del_mes: dict[str, list[Registro]] = {}
+    fuera: dict[str, list[Registro]] = {}
+    for leido in leidos:
+        for registro in leido.del_mes:
+            del_mes.setdefault(nombre_para_mostrar(registro), []).append(registro)
+        for registro in leido.descartados:
+            fuera.setdefault(nombre_para_mostrar(registro), []).append(registro)
+
+    lineas: list[str] = []
+    cantidad = 0
+    for nombre in sorted(set(del_mes) | set(fuera), key=lambda n: (n.casefold(), n)):
+        avisos = avisos_de_desarrollador(
+            del_mes.get(nombre, []), fuera.get(nombre, []), anio, mes
+        )
+        cantidad += len(avisos)
+        if avisos:
+            lineas.append(f"=== {nombre} ===")
+            lineas.extend(f"  {a}" for a in avisos)
+            lineas.append("")
+    return lineas, cantidad
+
+
+def _leer_entradas(
+    entradas: list[Path], anio: int, numero_mes: int, registrar_fallo
+) -> list[Leido]:
+    """Lee cada export. Un archivo que falla no frena a los demás."""
+    leidos: list[Leido] = []
+    for entrada in entradas:
+        try:
+            registros = leer(entrada)
+        except (ErrorLectura, ErrorMapeo) as error:
+            registrar_fallo(entrada.name, str(error))
+            continue
+        except (OSError, ValueError) as error:
+            registrar_fallo(entrada.name, f"Error al leer {entrada.name}: {error}")
+            continue
+
+        if not registros:
+            registrar_fallo(entrada.name, _error_de_export_vacio(entrada.name))
+            continue
+
+        del_mes, descartados = _separar_por_mes(registros, anio, numero_mes)
+        if not del_mes:
+            registrar_fallo(
+                entrada.name,
+                _error_de_mes_equivocado(descartados, anio, numero_mes, entrada.name),
+            )
+            continue
+
+        leidos.append(Leido(entrada.name, tuple(del_mes), tuple(descartados)))
+    return leidos
+
+
 def procesar_mes(mes: str, raiz: Path) -> int:
     """Procesa todos los exports de input/<mes>/. Devuelve el código de salida."""
     try:
@@ -301,14 +534,8 @@ def procesar_mes(mes: str, raiz: Path) -> int:
         print(f"ERROR: {error}")
         return 1
 
-    plantilla = raiz / "templates" / "plantilla.xlsx"
-    if not plantilla.is_file():
-        print(f"ERROR: falta la plantilla {plantilla}")
-        return 1
-
-    # Los tres formatos de export de Kimai: .xlsx (timesheet plano y resumen
-    # mensual) y .csv (timesheet plano). '~$' es el archivo de bloqueo que
-    # deja Excel cuando el dueño tiene un export abierto.
+    # Los formatos de export de Kimai: .xlsx y .csv. '~$' es el archivo de
+    # bloqueo que deja Excel cuando el dueño tiene un export abierto.
     entradas = sorted(
         p
         for extension in EXTENSIONES_DE_ENTRADA
@@ -335,108 +562,96 @@ def procesar_mes(mes: str, raiz: Path) -> int:
         return 1
 
     print(f"Procesando input/{mes}/ ...")
-    avisos_totales: list[str] = []
-    datos_totales: list[str] = []
-    generados: list[str] = []
-    no_generados: list[tuple[str, str]] = []
-    cantidad_avisos = 0
-    # Nombre de salida -> archivo de entrada que lo generó, para detectar
-    # colisiones (dos exports que resuelven al mismo "<Mes> <Apellido>.xlsx").
-    destinos_generados: dict[Path, str] = {}
+    no_leidos: list[tuple[str, str]] = []
 
     def registrar_fallo(entrada: str, motivo: str) -> None:
         """Deja el fallo en consola y en la lista que va a _validacion.txt."""
-        print(f"  {entrada}: NO GENERADO")
-        for linea in motivo.splitlines():
-            print(f"    {linea}")
-        no_generados.append((entrada, motivo))
+        print(f"  {entrada}: NO ENTRA AL ARCHIVO")
+        print(motivo)
+        no_leidos.append((entrada, motivo))
 
-    def registrar_fallo_de_mapeo(entrada: str, error: Exception, extra: str) -> None:
-        """Como registrar_fallo, pero sin indentar el mensaje en consola.
+    leidos = _leer_entradas(entradas, anio, numero_mes, registrar_fallo)
 
-        El mensaje de ErrorMapeo (en especial el bloque YAML sugerido para
-        mapeo.yaml) ya trae el sangrado pegable listo.
-        """
-        print(f"  {entrada}: NO GENERADO")
-        print(str(error) + extra)
-        no_generados.append((entrada, str(error) + extra))
+    for leido in leidos:
+        nombres = sorted({nombre_para_mostrar(r) for r in leido.del_mes})
+        horas = _horas(sum(segundos_de(r.horas) for r in leido.del_mes))
+        print(
+            f"  {leido.archivo}  ->  {', '.join(nombres)}"
+            f"  ({len(leido.del_mes)} registro/s, {horas:.2f} h)"
+        )
 
-    for entrada in entradas:
-        # Primero se resuelve la identidad del export: eso ya alcanza para
-        # saber qué archivo de output/ va a reemplazar esta entrada, antes de
-        # que pueda fallar cualquier otra cosa.
+    registros = [r for leido in leidos for r in leido.del_mes]
+    detalle = construir(registros, mapeo)
+    segundos_esperados = sum(segundos_de(r.horas) for r in registros)
+
+    nombre_limpio = nombre_de_archivo(mapeo.archivo_salida, anio, numero_mes)
+    nombre_salida = (
+        nombre_incompleto(nombre_limpio, len(no_leidos))
+        if no_leidos
+        else nombre_limpio
+    )
+
+    generado: str | None = None
+    nota_de_apartado = ""
+    if not leidos:
+        # Sin un solo export legible no hay archivo que generar: uno vacío con
+        # nombre de entregable es exactamente lo que este cambio busca evitar.
+        nota_de_apartado = _apartar_excel_previo(carpeta_salida / nombre_limpio)
+        print("  No se generó ningún archivo: no se pudo leer ningún export.")
+        if nota_de_apartado:
+            print(nota_de_apartado.strip())
+    else:
+        destino = carpeta_salida / nombre_salida
+        # Si el consolidado sale marcado como incompleto, el limpio de una
+        # corrida anterior no puede quedar ahí: es el que el dueño adjuntaría
+        # sin pensarlo.
+        nota_de_apartado = (
+            _apartar_excel_previo(carpeta_salida / nombre_limpio) if no_leidos else ""
+        )
         try:
-            registros = leer(entrada)
-            persona = resolver_identidad(registros, mapeo, entrada.name)
-        except (ErrorLectura, ErrorMapeo) as error:
-            # Destino todavía desconocido: no hay archivo viejo que apartar.
-            registrar_fallo_de_mapeo(entrada.name, error, "")
-            continue
-        except (OSError, ValueError) as error:
-            registrar_fallo(entrada.name, f"Error al leer {entrada.name}: {error}")
-            continue
-
-        destino = carpeta_salida / nombre_de_archivo_de(numero_mes, persona.archivo)
-        if destino in destinos_generados:
-            # El destino lo acaba de generar otra entrada de esta misma
-            # corrida: no es un archivo viejo, no se aparta.
-            registrar_fallo(
-                entrada.name,
-                f"{destino.name} ya fue generado en esta corrida a partir de "
-                f"{destinos_generados[destino]}.\n"
-                f"Dejá en input/{mes}/ un solo export por desarrollador "
-                "y volvé a correr.",
-            )
-            continue
-
-        try:
-            reporte = agregar(registros, mapeo, anio, numero_mes, entrada.name)
-            _escribir_atomico(reporte, plantilla, destino)
-        except (ErrorLectura, ErrorMapeo) as error:
-            registrar_fallo_de_mapeo(
-                entrada.name, error, _apartar_excel_previo(destino)
-            )
-            continue
+            _escribir_atomico(detalle, destino, segundos_esperados)
+            generado = nombre_salida
+        except ErrorIntegridad as error:
+            registrar_fallo(nombre_salida, str(error))
         except PermissionError:
             registrar_fallo(
-                entrada.name,
-                f"No se pudo escribir {destino.name}: permiso denegado.\n"
-                "Es probable que tengas ese Excel abierto. Cerralo y volvé a "
-                "correr." + _apartar_excel_previo(destino),
+                nombre_salida,
+                f"No se pudo escribir {nombre_salida}: permiso denegado.\n"
+                f"  Es probable que tengas ese archivo abierto. Cerralo y "
+                f"volvé a correr.",
             )
-            continue
         except (OSError, ValueError) as error:
             registrar_fallo(
-                entrada.name,
-                f"Error al generar el Excel de {entrada.name}: {error}"
-                + _apartar_excel_previo(destino),
+                nombre_salida, f"Error al generar {nombre_salida}: {error}"
             )
-            continue
+        if nota_de_apartado:
+            print(nota_de_apartado.strip())
 
-        destinos_generados[destino] = entrada.name
-        clientes = len({f.cliente for f in reporte.filas})
+    if generado is not None:
         print(
-            f"  {entrada.name}  ->  {destino.name}"
-            f"  ({reporte.total_redondeado:.1f} h, {clientes} cliente/s)"
+            f"  Archivo para el partner: {generado}"
+            f"  ({len(detalle.filas)} fila/s, {detalle.horas:.2f} h)"
         )
-        generados.append(destino.name)
 
-        # El desvío por redondeo va siempre, supere o no el umbral: es un dato
-        # de facturación, no una alarma, y por eso no cuenta como aviso.
-        datos_totales.append(f"=== {destino.name} ===")
-        datos_totales.append(f"  {dato_de_desvio(reporte)}")
-        datos_totales.append("")
+    avisos_generales = _avisos_de_numeros_ambiguos(detalle)
+    avisos_por_dev, cantidad_avisos = _avisos_agrupados_por_dev(
+        leidos, anio, numero_mes
+    )
+    cantidad_avisos += len(avisos_generales)
 
-        avisos = validar(reporte)
-        cantidad_avisos += len(avisos)
-        if avisos:
-            avisos_totales.append(f"=== {destino.name} ===")
-            avisos_totales.extend(f"  {a}" for a in avisos)
-            avisos_totales.append("")
-
-    ajenos = _xlsx_que_esta_corrida_no_genero(carpeta_salida, generados)
+    ajenos = _xlsx_que_esta_corrida_no_genero(
+        carpeta_salida, [generado] if generado else []
+    )
     contenido = _resumen_de_validacion(
-        mes, generados, no_generados, ajenos, datos_totales, avisos_totales
+        mes,
+        leidos,
+        no_leidos,
+        detalle if leidos else None,
+        generado,
+        nota_de_apartado,
+        ajenos,
+        avisos_generales,
+        avisos_por_dev,
     )
     informe_en_su_nombre = _escribir_informe(carpeta_salida, mes, contenido)
 
@@ -446,21 +661,23 @@ def procesar_mes(mes: str, raiz: Path) -> int:
             "NO generó. No los envíes; están listados en el informe."
         )
     print(
-        f"{len(generados)} archivo/s generado/s, {len(no_generados)} no generado/s, "
+        f"{len(leidos)} export/s leído/s, {len(no_leidos)} no leído/s, "
         f"{cantidad_avisos} aviso/s en output/{mes}/{NOMBRE_INFORME}"
     )
+    if no_leidos:
+        print(
+            "  El archivo salió marcado como INCOMPLETO: NO lo envíes hasta "
+            "corregir lo de arriba y volver a correr."
+        )
 
     if not informe_en_su_nombre:
         return 1
     # Los .xlsx ajenos NO cambian el código de salida. Que la carpeta tenga
-    # archivos de más no significa que la corrida haya fallado: los Excel del
-    # mes se generaron bien y la única acción pendiente es del dueño, sobre su
-    # propia carpeta. Además puede ser una situación permanente y querida (el
-    # dueño guarda ahí sus notas): un código 1 recurrente enseñaría a ignorar
-    # el código de salida, que es lo que distingue una corrida incompleta de
-    # una completa. El listado en el informe, que el dueño lee siempre antes de
-    # enviar, es lo que evita el envío equivocado.
-    return 1 if no_generados else 0
+    # archivos de más no significa que la corrida haya fallado: la única
+    # acción pendiente es del dueño, sobre su propia carpeta. Un código 1
+    # recurrente enseñaría a ignorar el código de salida, que es lo que
+    # distingue una corrida incompleta de una completa.
+    return 1 if no_leidos else 0
 
 
 def main(argv: list[str] | None = None) -> int:
