@@ -28,6 +28,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from cunix_horas.completado import completar_desde_mapeo
 from cunix_horas.detalle import Detalle, construir, nombre_para_mostrar, segundos_de
 from cunix_horas.escritor_detalle import (
     ErrorIntegridad,
@@ -36,6 +37,7 @@ from cunix_horas.escritor_detalle import (
     nombre_incompleto,
     verificar_integridad,
 )
+from cunix_horas.kimai_comun import ORIGEN_RESUMEN_MENSUAL
 from cunix_horas.lector_kimai import (
     EXTENSIONES_DE_ENTRADA,
     ErrorLectura,
@@ -269,13 +271,26 @@ def _horas(segundos: int) -> float:
     return segundos / SEGUNDOS_POR_HORA
 
 
+def _origenes_de(registros: list[Registro]) -> str:
+    """De qué reporte de Kimai salieron las filas de un desarrollador.
+
+    Casi siempre es uno solo, pero un export puede traer horas de dos
+    personas y una persona puede aparecer en dos exports, así que se nombran
+    todos los que haya.
+    """
+    return ", ".join(sorted({r.origen for r in registros}))
+
+
 def _seccion_de_desarrolladores(leidos: list[Leido]) -> list[str]:
-    """Quiénes entraron al archivo, con cuántos registros y cuántas horas.
+    """Quiénes entraron al archivo, con cuántos registros, horas y origen.
 
     Va arriba de todo: es lo primero que el dueño tiene que poder contar
-    contra la lista de su equipo antes de mandar nada.
+    contra la lista de su equipo antes de mandar nada. Y de cada uno se dice
+    **de qué reporte de Kimai salieron sus filas**, porque el resumen mensual
+    da filas sin descripción y sin hora de inicio: el archivo es válido, pero
+    el dueño tiene que poder decidir si lo manda así.
     """
-    entradas: list[tuple[str, str, int, int]] = []
+    entradas: list[tuple[str, str, int, int, str]] = []
     for leido in leidos:
         por_nombre: dict[str, list[Registro]] = {}
         for registro in leido.del_mes:
@@ -288,6 +303,7 @@ def _seccion_de_desarrolladores(leidos: list[Leido]) -> list[str]:
                     leido.archivo,
                     len(registros),
                     sum(segundos_de(r.horas) for r in registros),
+                    _origenes_de(registros),
                 )
             )
 
@@ -297,10 +313,33 @@ def _seccion_de_desarrolladores(leidos: list[Leido]) -> list[str]:
         lineas.append("  (ninguno)")
     lineas.extend(
         f"  - {nombre} ({archivo}): {cantidad} registro/s, "
-        f"{_horas(segundos):.2f} h"
-        for nombre, archivo, cantidad, segundos in entradas
+        f"{_horas(segundos):.2f} h  [{origen}]"
+        for nombre, archivo, cantidad, segundos, origen in entradas
     )
     lineas.append("")
+
+    resumidos = [e for e in entradas if ORIGEN_RESUMEN_MENSUAL in e[4]]
+    if resumidos:
+        lineas.append(
+            f"{len(resumidos)} de ellos exportaron con el reporte de resumen "
+            f"mensual. SUS FILAS VAN SIN DESCRIPCIÓN Y SIN HORA DE INICIO "
+            f"(la hora queda en 00:00):"
+        )
+        lineas.extend(f"  - {e[0]} ({e[1]})" for e in resumidos)
+        lineas.append("")
+        lineas.append(
+            "Esto NO frena nada y el archivo es válido: el resumen mensual no "
+            "trae esas dos columnas, y el partner las acepta vacías (112 de "
+            "las 160 filas de su archivo de referencia no tienen "
+            "descripción). El usuario, el mail y el número de proyecto de "
+            "esas filas salieron de config/mapeo.yaml."
+        )
+        lineas.append(
+            "Si querés que esas filas lleven la descripción de lo que hizo "
+            "cada uno y su hora de inicio, volvé a exportar a esas personas "
+            "desde Kimai con el reporte de detalle y corré de nuevo."
+        )
+        lineas.append("")
     return lineas
 
 
@@ -484,13 +523,18 @@ def _avisos_agrupados_por_dev(
 
 
 def _leer_entradas(
-    entradas: list[Path], anio: int, numero_mes: int, registrar_fallo
+    entradas: list[Path], mapeo: Mapeo, anio: int, numero_mes: int, registrar_fallo
 ) -> list[Leido]:
-    """Lee cada export. Un archivo que falla no frena a los demás."""
+    """Lee cada export y le completa lo que el mapeo tenga que poner.
+
+    Un archivo que falla no frena a los demás, y eso incluye el archivo al que
+    el mapeo no le puede completar el usuario, el mail o el número de
+    proyecto: frena ése solo, con el bloque YAML para arreglarlo.
+    """
     leidos: list[Leido] = []
     for entrada in entradas:
         try:
-            registros = leer(entrada)
+            registros = completar_desde_mapeo(leer(entrada), mapeo, entrada.name)
         except (ErrorLectura, ErrorMapeo) as error:
             registrar_fallo(entrada.name, str(error))
             continue
@@ -570,15 +614,21 @@ def procesar_mes(mes: str, raiz: Path) -> int:
         print(motivo)
         no_leidos.append((entrada, motivo))
 
-    leidos = _leer_entradas(entradas, anio, numero_mes, registrar_fallo)
+    leidos = _leer_entradas(entradas, mapeo, anio, numero_mes, registrar_fallo)
 
     for leido in leidos:
         nombres = sorted({nombre_para_mostrar(r) for r in leido.del_mes})
         horas = _horas(sum(segundos_de(r.horas) for r in leido.del_mes))
+        origen = _origenes_de(list(leido.del_mes))
         print(
             f"  {leido.archivo}  ->  {', '.join(nombres)}"
-            f"  ({len(leido.del_mes)} registro/s, {horas:.2f} h)"
+            f"  ({len(leido.del_mes)} registro/s, {horas:.2f} h)  [{origen}]"
         )
+        if ORIGEN_RESUMEN_MENSUAL in origen:
+            print(
+                "    OJO: sus filas van sin descripción y sin hora de inicio. "
+                "Está en el informe."
+            )
 
     registros = [r for leido in leidos for r in leido.del_mes]
     detalle = construir(registros, mapeo)

@@ -21,33 +21,68 @@ Un proceso repetible: se depositan los exports mensuales de Kimai en una carpeta
 
 ## Formato de entrada — los exports de Kimai
 
-Según con qué reporte de Kimai se exporte, sale un archivo distinto, siempre uno por desarrollador por mes. `lector_kimai.leer()` es un despachador: mira el archivo, elige el lector y devuelve `list[Registro]`, así que agregador, validador y escritor no se enteran del formato. Hoy se aceptan los dos exports del reporte de detalle; el resumen mensual se reconoce y se rechaza (más abajo, y el porqué).
+Según con qué reporte de Kimai se exporte, sale un archivo distinto, siempre uno por desarrollador por mes. `lector_kimai.leer()` es un despachador: mira el archivo, elige el lector y devuelve `list[Registro]`, así que agregador, validador y escritor no se enteran del formato. Se aceptan **los dos reportes**: el de detalle y el de resumen mensual. No dan lo mismo, y lo que el resumen no trae se completa desde el mapeo o frena ese archivo (más abajo, y el porqué).
 
 | Se reconoce por | Formato | Lector |
 |---|---|---|
 | extensión `.csv` | timesheet plano en CSV | `lector_timesheet_csv.py` |
 | `.xlsx` con `A1='Date'` | timesheet plano en XLSX | `lector_timesheet_xlsx.py` |
-| `.xlsx` con `B1='Total'` | resumen mensual | **rechazado** (ver abajo) |
+| `.xlsx` con `B1='Total'` | resumen mensual | `lector_resumen_mensual.py` (ver abajo) |
 
-### El resumen mensual dejó de alcanzar
+### El resumen mensual sirve, pero no trae todo
 
-El partner cambió el entregable: ahora recibe **un solo archivo con el
-detalle plano de todos los desarrolladores**, una fila por registro de
-tiempo, con la hora de inicio, el nombre para mostrar, el mail, la
-descripción y el número de proyecto de cada carga.
+El partner recibe **un solo archivo con el detalle plano de todos los
+desarrolladores**, una fila por registro de tiempo. El reporte de detalle de
+Kimai trae las diez columnas de esa fila. El resumen mensual es la grilla de
+días, con las horas ya sumadas, y **le faltan cinco**: la hora de inicio, el
+usuario, el mail, la descripción y el número de proyecto.
 
-El export de resumen mensual no trae nada de eso: es la grilla de días, con
-las horas ya sumadas. Aceptarlo generaría filas incompletas en silencio, que
-es justo el modo de falla que este proyecto evita en todos lados. Por eso
-`lector_kimai.leer()` lo **rechaza con `ErrorLectura`**, y el mensaje le dice
-al dueño qué datos faltan y que tiene que volver a exportar esa persona con
-el reporte de detalle. Como cualquier fallo de lectura, es de *ese* archivo:
-los demás desarrolladores se procesan igual.
+Durante un tiempo ese export se rechazó, para no emitir filas con columnas en
+blanco sin que nadie lo note. **El dueño revirtió esa decisión**: quiere poder
+usar los exports que ya tiene, aceptando lo que se pierde. El archivo de
+referencia del partner dice exactamente cuánto se puede aceptar:
 
-`lector_resumen_mensual.py` **no se borró y sigue probado**: el parseo (orden
-de la fecha, separador decimal, clasificación de filas, verificación contra
-los totales declarados) costó trabajo y el partner podría volver al formato
-anterior. Se recupera cambiando una línea en el despachador; sus tests llaman
+| Columna que falta | En el archivo del partner | Qué se hace |
+|---|---|---|
+| `Description` | 112 de 160 filas vacías | se emite vacía |
+| hora de inicio en `Date` | 1 de 160 filas en `00:00` | se emite en `00:00` |
+| `User` | 160 de 160 llenas | **del mapeo, o frena** |
+| `E-mail` | 160 de 160 llenas | **del mapeo, o frena** |
+| `Project number` | 160 de 160 llenas | **del mapeo, o frena** |
+
+Los tres datos que no pueden faltar salen de `config/mapeo.yaml`, **nunca
+adivinados**, en `completado.py`:
+
+- `Name` lo trae el propio archivo (`A1`).
+- `User` es la **clave** de la persona en `personas:`. La persona se resuelve
+  por su campo `nombre:`, que es lo único que el resumen trae.
+- `E-mail` sale de `personas.<username>.mail`, campo nuevo y opcional.
+- `Project number` sale de `proyectos.<codigo>.numero_proyecto`, campo nuevo
+  y opcional.
+
+Si el mapeo no tiene alguno de los tres, **ese archivo no entra**, con un
+mensaje que nombra al desarrollador o al proyecto y trae el bloque YAML listo
+para pegar, igual que ya se hace con los proyectos sin mapear. Como cualquier
+fallo de lectura, es de *ese* archivo: los demás se procesan igual.
+
+Frenar un archivo entero por un dato de configuración es deliberado. El
+partner factura sobre estas filas; una columna en blanco en un archivo de
+setenta filas no la ve nadie, y el número de proyecto no se puede derivar de
+nada: no es el código entre corchetes.
+
+**Para los registros del reporte de detalle el mapeo no interviene**: su
+usuario, su mail y su número de proyecto son los de Kimai, aunque el mapeo
+declare otra cosa. Los campos nuevos son un respaldo para lo que la fuente no
+trae, no una corrección de lo que sí trae. `Registro.origen` es lo que
+distingue los dos casos, y lo pone el lector.
+
+El informe dice, por desarrollador, de qué reporte salieron sus filas, y avisa
+de las que van sin descripción y sin hora de inicio. Ese aviso no frena nada:
+es para que el dueño decida si lo manda así o vuelve a exportar.
+
+`lector_resumen_mensual.py` conserva entero su parseo (orden de la fecha,
+separador decimal, clasificación de filas, verificación contra los totales
+declarados), que es lo que hace confiable a este formato. Sus tests llaman
 al lector interno en vez del punto de entrada.
 
 **Ante cualquier otra cosa se falla**, nunca se adivina: el error nombra el archivo, dice qué encontró en A1 y B1, y enumera los formatos que se reconocen. Como todo fallo de lectura, es de *ese* archivo: los demás desarrolladores se procesan igual.
@@ -234,18 +269,23 @@ archivo_salida: "Horas KLG-{mes}{anio}.xlsx"
 
 actividad: "Desarrollo"
 
-personas:   # opcional
+personas:   # opcional para el detalle, obligatoria para el resumen mensual
   mzalazar:  { nombre: "Matias Zalazar", archivo: "Zalazar" }
-  fdodera:   { nombre: "Franco Dodera",  archivo: "Dodera" }
+  lzalazar:  { nombre: "Lautaro Zalazar", archivo: "L Zalazar",
+               mail: "lautaro.zalazar@cunix.net" }   # mail: opcional
 
 proyectos:
-  CO2610170: { cliente: "Servicio Nacional de Aduanas", proyecto: "Subastas" }
-  CO2510115: { cliente: "Instituto de Salud Pública de Chile", proyecto: "SIAC-OIRS" }
-  PR2510126: { cliente: "MINVU", proyecto: "SELICO" }
+  CO2610170: { cliente: "Servicio Nacional de Aduanas", proyecto: "Subastas",
+               numero_proyecto: "CO2610170" }        # numero_proyecto: opcional
+  AD2690002: { cliente: "Sistemas - C.UNIX", proyecto: "VictoriusCP2",
+               numero_proyecto: "210" }
 ```
 
 - `archivo_salida:` es el nombre del único archivo que recibe el partner. `{mes}` sale de la tabla fija de meses del proyecto (`Jan`…`Dec`) y `{anio}` es el año de cuatro dígitos; agosto de 2026 da `Horas KLG-Aug2026.xlsx`. Es opcional. El archivo de referencia del partner usa `Sept` para septiembre: si se quiere esa forma exacta, o meses en español, se escribe el mes a mano en el patrón, a costa de tener que actualizar la línea cada mes. Se valida al cargar el mapeo —antes de leer ningún export— que el patrón no use reemplazos inventados y que termine en `.xlsx`.
-- **`personas:` es opcional.** El archivo del partner trae el nombre, el usuario y el mail de cada desarrollador tal como vienen de Kimai, así que el entregable vigente no necesita declarar a nadie. Si la sección no está, el mapeo carga igual. La sigue usando el escritor por desarrollador, que quedó conservado.
+- **`personas:` es opcional para quien exporta con el reporte de detalle.** Ese export trae el nombre, el usuario y el mail, y el mapeo no interviene. Si la sección no está, el mapeo carga igual. La sigue usando el escritor por desarrollador, que quedó conservado.
+- **`personas:` es obligatoria para quien exporta con el resumen mensual.** Ese reporte no trae el usuario ni el mail: la clave de la entrada *es* el `User` que ve el partner, y `mail:` es su columna `E-mail`. Si falta la persona, o está pero sin `mail:`, ese archivo no entra.
+- **`mail:` y `numero_proyecto:` son opcionales**, y sólo los usan las filas que vienen del resumen mensual. Declarados pero vacíos frenan la carga del mapeo: van a columnas que el partner factura, y un campo escrito a medias tiene que fallar con el nombre de la entrada, no salir en blanco del otro lado.
+- **`numero_proyecto:` no es la clave.** La clave es el código entre corchetes (`AD2690002`); `numero_proyecto` es el `Project number` de Kimai (`210`). Se parecen y son dos cosas distintas. Y no se puede derivar de nada: por eso su ausencia frena, en vez de rellenarse con el código.
 - **Cada entrada de `proyectos:` es opcional también.** Un proyecto sin declarar **ya no frena nada**: sale con el nombre derivado de Kimai y queda listado en `_validacion.txt` con el bloque listo para pegar. El mapeo pasó de ser obligatorio a ser un pulido opcional de nombres, y se puede porque cada fila lleva su `Project number`: la trazabilidad no depende del mapeo.
 - La clave de `proyectos` es el código entre corchetes de la columna J (`[CO2610170]` → `CO2610170`). **Match exacto**, nunca por similitud de texto: el código es estable aunque se renombre el proyecto en Kimai, y un match difuso podría imputar horas al cliente equivocado sin que nadie lo note.
 - El cliente se declara **por proyecto**, no en una sección aparte. Esto permite agrupar en el Excel proyectos que en Kimai están bajo clientes distintos, o separarlos, según lo que quiera ver el partner.
@@ -270,12 +310,13 @@ Módulos en `cunix_horas/` (paquete en la raíz del proyecto, no bajo `src/`: as
 
 | Módulo | Responsabilidad | Depende de |
 |--------|-----------------|------------|
-| `lector_kimai.py` | Despachador: detecta el formato del export, delega en los dos lectores de timesheet y rechaza el resumen mensual. | los lectores de timesheet |
+| `lector_kimai.py` | Despachador: detecta el formato del export y delega en los tres lectores. | los tres lectores |
 | `kimai_comun.py` | `Registro`, `ErrorLectura` y el parseo XML del `.xlsx`, compartidos. | — |
 | `lector_timesheet_xlsx.py` | Timesheet `.xlsx` → `list[Registro]`. Serial de fecha, duración × 24. | `kimai_comun` |
 | `lector_timesheet_csv.py` | Timesheet `.csv` → `list[Registro]`. Fecha ISO, duración `H:MM`, columnas por nombre. | `kimai_comun` |
-| `lector_resumen_mensual.py` | Resumen mensual `.xlsx` → `list[Registro]`. Verifica contra el total declarado. **Ya no se usa desde `leer()`**: se conserva probado por si el partner vuelve a ese formato. | `kimai_comun` |
-| `mapeo.py` | Carga y valida el YAML. Resuelve código → (cliente, proyecto). Resuelve username *o* nombre para mostrar → (nombre, archivo). | — |
+| `lector_resumen_mensual.py` | Resumen mensual `.xlsx` → `list[Registro]` marcados con `origen`. Verifica contra el total declarado. | `kimai_comun` |
+| `completado.py` | Les pone a los registros del resumen mensual el `User`, el `E-mail` y el `Project number` que declara el mapeo, o frena ese archivo con el YAML pegable. Los del detalle pasan intactos. | `mapeo` |
+| `mapeo.py` | Carga y valida el YAML. Resuelve código → (cliente, proyecto, numero_proyecto). Resuelve username *o* nombre para mostrar → (nombre, archivo, mail, username). | — |
 | `detalle.py` | `list[Registro]` + mapeo → `Detalle`: una `FilaDetalle` por registro, ordenadas, más los proyectos sin mapear y los `Project number` ambiguos. | `mapeo` |
 | `escritor_detalle.py` | `Detalle` → el `.xlsx` del partner. Incluye la verificación de integridad, que **relee** el archivo escrito. | openpyxl |
 | `agregador.py` | **Conservado, sin ejecutar.** `list[Registro]` + mapeo → `Reporte` con jerarquía y totales. | `mapeo` |
@@ -338,7 +379,8 @@ Todas las estructuras son inmutables; cada etapa devuelve un valor nuevo.
 **Deja a ese desarrollador afuera del archivo (y el consolidado sale marcado como INCOMPLETO):**
 
 - Archivo de input ilegible, de formato desconocido, o sin la estructura de columnas esperada.
-- Export de resumen mensual: el formato se reconoce pero no trae los datos que el partner pide por fila.
+- Export de resumen mensual cuyo desarrollador no está en `personas:`, o está pero sin `mail:`. El mensaje lo nombra y trae el bloque YAML pegable.
+- Export de resumen mensual con un proyecto sin `numero_proyecto:` en `proyectos:` (o directamente sin entrada). Ídem.
 - Export sin ninguna fila de datos, o con todas sus filas fuera del mes que se está generando: las dos cosas suelen ser el rango de fechas mal puesto en Kimai.
 - Hora de inicio (`From`) que no tiene formato de hora: va en la celda de fecha del entregable, y mal leída movería el registro de día.
 - Proyecto sin código entre corchetes en la columna `Project`.
@@ -364,7 +406,6 @@ El fallo de un archivo **no impide** procesar los demás: cada input es independ
 - Resumen mensual cuyo total declarado no cierra con lo parseado.
 - Resumen mensual con encabezados de día ambiguos (no se puede decidir día/mes vs mes/día).
 - Archivo de input ilegible, de formato desconocido, o sin la estructura de columnas esperada.
-- Export de resumen mensual: el formato se reconoce pero no trae los datos que el partner pide por fila.
 - Hora de inicio (`From`) que no tiene formato de hora: va en la celda de fecha del entregable, y mal leída movería el registro de día.
 
 **Avisa (el archivo se genera igual), en `output/<mes>/_validacion.txt`:**
@@ -378,6 +419,7 @@ Agrupados por desarrollador:
 
 Del mes entero:
 
+- **De qué reporte de Kimai salió cada desarrollador**, junto a sus registros y sus horas. Y, para los que vinieron del resumen mensual, el aviso explícito de que **sus filas van sin descripción y sin hora de inicio**, con la indicación de volver a exportar con el reporte de detalle si quiere ese dato. No frena nada: es información para decidir.
 - **Proyectos sin mapear**, con el nombre que se usó y el bloque YAML listo para pegar en `config/mapeo.yaml` si el dueño quiere otro.
 - **Un mismo `Project number` con más de un nombre de proyecto en el mes**: significa que alguien renombró el proyecto en Kimai a mitad de mes y el partner vería dos nombres para lo mismo.
 - Los `.xlsx` que están en `output/<mes>/` y **esta corrida no generó** (los Excel del formato anterior, un consolidado marcado como INCOMPLETO de otra corrida, archivos del dueño). No se borran nunca, pero se nombran uno por uno: el dueño adjunta la carpeta, no la corrida.
@@ -440,7 +482,8 @@ TDD. Fixtures reales en `tests/fixtures/`:
 Cobertura por módulo:
 
 - **lector_kimai:** parsea el fixture real; 24 registros; suma 76.5 h; rango 2026-08-03 a 2026-08-31; tolera el atributo `showZeroes`; resuelve tanto `sharedStrings` como `inlineStr`; convierte el serial de fecha correctamente.
-- **mapeo:** resuelve códigos conocidos; lanza error con sugerencia YAML ante uno desconocido; ídem para usernames.
+- **mapeo:** resuelve códigos conocidos; lanza error con sugerencia YAML ante uno desconocido; ídem para usernames; `mail:` y `numero_proyecto:` opcionales, y declarados en blanco frenan la carga.
+- **completado:** un registro de resumen mensual se completa con `User`, `E-mail` y `Project number` del mapeo y sale con la descripción vacía y la fecha sin hora; si falta el mail o el número, ese archivo no entra, con el bloque YAML pegable; un registro de detalle sale con los valores de Kimai aunque el mapeo declare otros.
 - **agregador:** jerarquía correcta; totales por fila, por día y general; días sin horas quedan ausentes; dos registros del mismo día/proyecto se suman.
 - **validador:** dispara cada tipo de aviso con un caso mínimo.
 - **escritor_excel:** el archivo generado, releído, reproduce celda por celda la estructura de `Oct Dodera.xlsx`; negrita en filas de proyecto; merges de cliente; cantidad de columnas según los días del mes (probar febrero y un mes de 30).

@@ -12,22 +12,34 @@
 #            que asi hay que actualizar esta linea todos los meses.
 #            Si se borra la linea vale "Horas KLG-{mes}{anio}.xlsx".
 #
-# personas:  OPCIONAL. El archivo que recibe el partner trae el nombre, el
-#            usuario y el mail de cada desarrollador tal como vienen de Kimai,
-#            asi que no hace falta declarar a nadie: si esta seccion no esta,
-#            el mapeo carga igual. La sigue usando el escritor por
-#            desarrollador, que quedo en el repo sin ejecutarse.
+# personas:  OPCIONAL para quien exporta con el REPORTE DE DETALLE: ese export
+#            trae el nombre, el usuario y el mail de cada desarrollador, y el
+#            mapeo no interviene aunque diga otra cosa.
 #
-#            clave = username de Kimai (columna F del export plano).
-#            El campo `nombre` es el que va en A1 del Excel, y ademas es lo
-#            unico que trae el export de resumen mensual, que no tiene username:
-#            para esos archivos la persona se resuelve por `nombre`, asi que
-#            tiene que coincidir exactamente con lo que muestra Kimai.
-#            El campo `archivo` va en el nombre del Excel: "<Mes> <archivo>.xlsx".
+#            OBLIGATORIA para quien exporta con el RESUMEN MENSUAL: ese reporte
+#            trae solo el nombre, las horas y el proyecto. El `User` y el
+#            `E-mail` de esas filas salen de aca, y si no estan, ESE ARCHIVO NO
+#            ENTRA (el programa avisa que falta y como completarlo). No se
+#            emiten vacias: el partner las necesita llenas.
+#
+#            clave = username de Kimai (columna F del export plano). ES el
+#            `User` que ve el partner.
+#            `nombre`  = lo que va en A1 del Excel, y ademas es lo unico que
+#                        trae el resumen mensual: para esos archivos la persona
+#                        se resuelve por `nombre`, asi que tiene que coincidir
+#                        exactamente con lo que muestra Kimai.
+#            `archivo` = va en el nombre del Excel: "<Mes> <archivo>.xlsx".
+#            `mail`    = OPCIONAL. La columna E-mail de las filas que vengan
+#                        del resumen mensual.
 #
 # proyectos: clave = codigo entre corchetes del campo Project (columna J).
 #            Se usa el codigo y no el nombre porque el codigo no cambia aunque
 #            alguien renombre el proyecto en Kimai.
+#            `numero_proyecto` = OPCIONAL. El `Project number` de Kimai, que NO
+#            es el codigo entre corchetes: [AD2690002] tiene numero 210. Solo
+#            lo usan las filas que vienen del resumen mensual, que no lo trae.
+#            Si falta, ESE ARCHIVO NO ENTRA: el partner tiene esa columna llena
+#            en sus 160 filas de referencia, sin una sola excepcion.
 #
 # actividad: texto de la UNICA fila de actividad que lleva cada proyecto en el
 #            Excel. En Kimai cada dev clasifica sus horas como quiere
@@ -56,29 +68,48 @@ personas:
   lcarducci:
     nombre: "Luciano Carducci"
     archivo: "Carducci"
-  # Lautaro y Alexis exportaron con el reporte de resumen mensual, que no trae
-  # username. Se resuelven por `nombre`. Si algun mes exportan con el reporte
-  # plano y su username real no es este, el programa lo va a avisar y frenar.
+  # Lautaro exporto con el reporte de resumen mensual, que no trae username ni
+  # mail. Se resuelve por `nombre`, y su `User` es la clave de abajo.
   lzalazar:
     nombre: "Lautaro Zalazar"
     archivo: "L Zalazar"
-  acarnero:
-    nombre: "Alexis Carnero"
-    archivo: "Carnero"
+    mail: "lautaro.zalazar@cunix.net"
+
+  # >>> PENDIENTE - FALTA COMPLETAR <<<
+  # Alexis Carnero exporto con el resumen mensual y NO sabemos su username de
+  # Kimai ni su mail. No se inventan: hasta que no esten, alexis.xlsx NO ENTRA
+  # al archivo del mes y el programa lo avisa con el bloque para pegar aca.
+  # Cuando los tengas, agrega debajo de esta linea (sin los '#'):
+  #
+  #   <username-de-kimai-de-alexis>:
+  #     nombre: "Alexis Carnero"
+  #     archivo: "Carnero"
+  #     mail: "<mail-de-kimai-de-alexis>"
 
 proyectos:
   CO2610170:
     cliente: "Servicio Nacional de Aduanas"
     proyecto: "Subastas"
+    numero_proyecto: "CO2610170"
   CO2510115:
     cliente: "Instituto de Salud Pública de Chile"
     proyecto: "SIAC-OIRS"
+    numero_proyecto: "CO2510115"
   PR2510126:
     cliente: "MINVU"
     proyecto: "SELICO"
+    numero_proyecto: "PR2510126"
   AD2690002:
     cliente: "Sistemas - C.UNIX"
     proyecto: "VictoriusCP2"
+    # El caso que muestra que el Project number NO es el codigo del corchete.
+    numero_proyecto: "210"
   GI2680001:
     cliente: "Sistemas - C.UNIX"
     proyecto: "Victorius 3"
+    # >>> PENDIENTE - FALTA COMPLETAR <<<
+    # No sabemos el Project number que Kimai le da a este proyecto, y no se
+    # inventa. Es el proyecto de Lautaro, que exporto con el resumen mensual:
+    # hasta que no este, lautaro.xlsx NO ENTRA al archivo del mes.
+    # Cuando lo tengas, descomenta la linea de abajo con el valor real:
+    #   numero_proyecto: "<el Project number de Kimai>"

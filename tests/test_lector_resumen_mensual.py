@@ -1,11 +1,14 @@
 """Tests del lector de resumen mensual (.xlsx con B1='Total').
 
-Este formato ya no se acepta como entrada: no trae el usuario de Kimai, ni
-el mail, ni la descripción, ni la hora de inicio, y el partner ahora pide
-todo eso en cada fila. `lector_kimai.leer()` lo rechaza (ver el bloque del
-final), pero el parseo sigue vivo por si el partner vuelve atrás, así que la
-cobertura que le costó trabajo ganarse se conserva entera: los tests de acá
-llaman al lector interno `leer_resumen_mensual` en vez del punto de entrada.
+Este formato **vuelve a aceptarse** como entrada. No trae el usuario de
+Kimai, ni el mail, ni la descripción, ni la hora de inicio, ni el número de
+proyecto: de esos cinco, la descripción y la hora se emiten vacías (el
+partner las acepta así), y los otros tres los completa `completado.py` desde
+`config/mapeo.yaml`.
+
+Lo de acá es sólo el parseo de la grilla, así que casi todos los tests llaman
+al lector interno `leer_resumen_mensual`. El bloque del final comprueba que
+el punto de entrada lo reconoce y lo marca con su origen.
 """
 import zipfile
 from datetime import date
@@ -14,13 +17,17 @@ from pathlib import Path
 import pytest
 from conftest import FIXTURES
 
-from cunix_horas.kimai_comun import ErrorLectura, leer_hoja
+from cunix_horas.kimai_comun import (
+    ORIGEN_RESUMEN_MENSUAL,
+    ErrorLectura,
+    leer_hoja,
+)
 from cunix_horas.lector_kimai import leer as leer_por_el_punto_de_entrada
 from cunix_horas.lector_resumen_mensual import leer_resumen_mensual
 
 
 def leer(ruta):
-    """El lector interno, salteando el punto de entrada que ahora rechaza."""
+    """El lector interno, sin pasar por el punto de entrada."""
     ruta = Path(ruta)
     return leer_resumen_mensual(ruta, leer_hoja(ruta))
 
@@ -505,44 +512,39 @@ def test_un_mes_sin_corrimiento_pasa_el_control_por_dia(tmp_path):
     ]
 
 
-# --- El punto de entrada ya no acepta este formato -------------------------
-# El entregable pasó a ser el detalle plano de todos los desarrolladores, una
-# fila por registro. El resumen mensual no trae los datos que van en esa
-# fila, así que generarlo daría filas incompletas sin que nadie se entere.
+# --- El punto de entrada acepta este formato y lo marca ---------------------
+# El resumen mensual volvió a aceptarse: el dueño puede usar el export que ya
+# tiene. Lo que no trae no se inventa, se completa desde el mapeo, y eso lo
+# hace `completado.py` a partir del `origen` que el lector deja marcado acá.
 
 
 @pytest.mark.parametrize("ruta", [LAUTARO, ALEXIS, MULTI])
-def test_el_punto_de_entrada_rechaza_el_resumen_mensual(ruta):
-    with pytest.raises(ErrorLectura):
-        leer_por_el_punto_de_entrada(ruta)
+def test_el_punto_de_entrada_acepta_el_resumen_mensual(ruta):
+    assert leer_por_el_punto_de_entrada(ruta)
 
 
-def test_el_mensaje_nombra_el_archivo_y_los_datos_que_faltan():
-    with pytest.raises(ErrorLectura) as excepcion:
-        leer_por_el_punto_de_entrada(LAUTARO)
-    mensaje = str(excepcion.value)
-    assert LAUTARO.name in mensaje
-    assert "resumen mensual" in mensaje
-    for dato in ("hora de inicio", "nombre", "mail", "descripción", "número de proyecto"):
-        assert dato in mensaje
+def test_el_punto_de_entrada_devuelve_lo_mismo_que_el_lector_interno():
+    assert leer_por_el_punto_de_entrada(LAUTARO) == leer(LAUTARO)
 
 
-def test_el_mensaje_dice_que_hay_que_volver_a_exportar_el_detalle():
-    with pytest.raises(ErrorLectura) as excepcion:
-        leer_por_el_punto_de_entrada(ALEXIS)
-    mensaje = str(excepcion.value)
-    assert "reporte de detalle" in mensaje
-    assert "Kimai" in mensaje
+@pytest.mark.parametrize("ruta", [LAUTARO, ALEXIS, MULTI])
+def test_los_registros_quedan_marcados_como_resumen_mensual(ruta):
+    """Sin esta marca, `completado.py` no sabría a cuáles completar."""
+    assert {r.origen for r in leer_por_el_punto_de_entrada(ruta)} == {
+        ORIGEN_RESUMEN_MENSUAL
+    }
 
 
-def test_el_rechazo_no_frena_a_los_demas_desarrolladores():
-    """El mensaje se lo tiene que decir al dueño, que no lee el código."""
-    with pytest.raises(ErrorLectura) as excepcion:
-        leer_por_el_punto_de_entrada(MULTI)
-    assert "Los demás desarrolladores se procesan igual" in str(excepcion.value)
+def test_el_resumen_mensual_no_trae_las_columnas_que_completa_el_mapeo():
+    """Salen vacías del lector: llenarlas es cosa del mapeo, no del parseo."""
+    for registro in leer_por_el_punto_de_entrada(LAUTARO):
+        assert registro.email == ""
+        assert registro.numero_proyecto == ""
+        assert registro.hora_inicio is None
+        assert registro.descripcion == ""
 
 
 def test_el_lector_interno_sigue_leyendo_los_totales_de_los_dos_reales():
-    """Lo que el parseo ya sabía hacer no se perdió al rechazar el formato."""
+    """Lo que el parseo ya sabía hacer se conserva entero."""
     assert round(sum(r.horas for r in leer(LAUTARO)), 2) == 9.0
     assert round(sum(r.horas for r in leer(ALEXIS)), 2) == 150.0

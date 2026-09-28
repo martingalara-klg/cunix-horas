@@ -29,6 +29,12 @@ EPOCA_EXCEL = date(1899, 12, 30)
 # de la fila de cliente dejaría de coincidir con la lectura de la grilla.
 PRIMERA_COL_DE_DIA = "C"
 
+# De qué reporte de Kimai salió un registro. El detalle trae las diez columnas
+# que el partner factura; el resumen mensual trae la grilla de días y hay que
+# completarle el usuario, el mail y el número de proyecto desde el mapeo.
+ORIGEN_DETALLE = "reporte de detalle"
+ORIGEN_RESUMEN_MENSUAL = "resumen mensual"
+
 _CODIGO = re.compile(r"^\s*\[([^\]]+)\]")
 _HORA = re.compile(r"^\s*(\d{1,2}):([0-5]\d)(?::([0-5]\d))?\s*$")
 _SOLO_LETRAS = re.compile(r"[A-Z]+")
@@ -75,6 +81,11 @@ class Registro:
     # conserva el del proyecto: de ahí sale el nombre a mostrar cuando el
     # proyecto no está en el mapeo.
     texto_cliente: str = ""
+    # De qué reporte de Kimai salió este registro. No es un dato de Kimai: es
+    # lo que permite saber qué columnas trae el export y cuáles hay que
+    # completar desde `config/mapeo.yaml`. Los registros del detalle nunca se
+    # completan: sus valores son los de Kimai, aunque el mapeo diga otra cosa.
+    origen: str = ORIGEN_DETALLE
 
 
 @dataclass(frozen=True)

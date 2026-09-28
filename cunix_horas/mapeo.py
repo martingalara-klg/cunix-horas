@@ -28,14 +28,32 @@ class ErrorMapeo(Exception):
 
 @dataclass(frozen=True)
 class Persona:
+    """Una persona de `personas:`, con lo que el mapeo sabe de ella.
+
+    `mail` y `username` son el respaldo de las dos columnas que el resumen
+    mensual no trae. **Sólo se usan para los registros de ese export**: los
+    del reporte de detalle traen su usuario y su mail de Kimai y no miran
+    acá, aunque el mapeo declare otra cosa.
+    """
+
     nombre: str
     archivo: str
+    # Opcional. Vacío mientras nadie lo declare: es lo que hace frenar un
+    # archivo de resumen mensual, con el bloque YAML para completarlo.
+    mail: str = ""
+    # La clave de `personas:`, que ES el `User` que ve el partner. Viaja
+    # adentro de la Persona para que quien la resuelve por `nombre` no tenga
+    # que volver a buscar cuál era su clave.
+    username: str = ""
 
 
 @dataclass(frozen=True)
 class DestinoProyecto:
     cliente: str
     proyecto: str
+    # Opcional, y es el `Project number` que ve el partner. Mismo respaldo que
+    # `Persona.mail`: sólo lo usan los registros del resumen mensual.
+    numero_proyecto: str = ""
 
 
 def _normalizar(texto: str) -> str:
@@ -78,6 +96,24 @@ def _alias_de_kimai(texto: str) -> str:
     return coincidencia.group(1).strip() if coincidencia else texto.strip()
 
 
+def _texto_opcional(valor, campo: str, entidad: str, ruta: Path) -> str:
+    """Un campo opcional del YAML: ausente vale vacío, presente tiene que ser texto.
+
+    No se acepta declarado y en blanco. Ese campo termina en una columna que
+    el partner factura: si está escrito a medias conviene que frene ahora, con
+    el nombre de la entrada, y no que salga vacío del otro lado.
+    """
+    if valor is None:
+        return ""
+    if not isinstance(valor, str) or not valor.strip():
+        raise ErrorMapeo(
+            f"'{campo}:' de {entidad} en {ruta} está declarado pero vacío.\n"
+            f"  Ese campo va a una columna que el partner factura: o lo "
+            f"completás entre comillas, o borrás la línea."
+        )
+    return valor.strip()
+
+
 def _sugerencia_de_persona(identificador: str, archivo: str) -> str:
     """Mensaje de persona sin mapear, con el YAML listo para pegar.
 
@@ -100,10 +136,15 @@ def _sugerencia_de_persona(identificador: str, archivo: str) -> str:
         f"coincide con eso.\n"
         f"  Si la persona ya está cargada, hacé que su username o su "
         f"'nombre:' coincidan exactamente con lo de arriba.\n"
+        f"  La clave de la entrada ES el 'User' que ve el partner, y el "
+        f"'mail:' es su columna E-mail: los dos hacen falta si esta persona "
+        f"exportó con el reporte de resumen mensual, que no los trae. Con el "
+        f"reporte de detalle salen de Kimai y el mapeo no interviene.\n"
         f"  Si no está, agregá bajo personas:\n"
         f"  {clave}:\n"
         f'    nombre: "{nombre}"\n'
-        f'    archivo: "AJUSTAR - apellido, va en el nombre del archivo"'
+        f'    archivo: "AJUSTAR - apellido, va en el nombre del archivo"\n'
+        f'    mail: "AJUSTAR - el mail de Kimai de esta persona"'
     )
 
 
@@ -216,7 +257,14 @@ class Mapeo:
                     raise ErrorMapeo(
                         f"A la persona '{username}' en {ruta} le falta '{campo}:'"
                     )
-            personas[username] = Persona(datos["nombre"], datos["archivo"])
+            personas[username] = Persona(
+                datos["nombre"],
+                datos["archivo"],
+                _texto_opcional(
+                    datos.get("mail"), "mail", f"la persona '{username}'", ruta
+                ),
+                username,
+            )
 
         proyectos: dict[str, DestinoProyecto] = {}
         for codigo, datos in (contenido["proyectos"] or {}).items():
@@ -225,7 +273,16 @@ class Mapeo:
                     raise ErrorMapeo(
                         f"Al proyecto '{codigo}' en {ruta} le falta '{campo}:'"
                     )
-            proyectos[codigo] = DestinoProyecto(datos["cliente"], datos["proyecto"])
+            proyectos[codigo] = DestinoProyecto(
+                datos["cliente"],
+                datos["proyecto"],
+                _texto_opcional(
+                    datos.get("numero_proyecto"),
+                    "numero_proyecto",
+                    f"el proyecto '{codigo}'",
+                    ruta,
+                ),
+            )
 
         return cls(
             personas,

@@ -445,12 +445,14 @@ def test_si_no_se_puede_escribir_el_informe_va_a_un_archivo_alternativo(
 # --- Punta a punta sobre los cinco exports reales de input/2026-08/ ----------
 
 
-def test_punta_a_punta_con_los_cinco_exports_reales(tmp_path):
+def test_punta_a_punta_con_el_mapeo_incompleto_de_config(tmp_path):
     """Los cinco archivos que el dueño exportó de verdad para agosto de 2026.
 
-    Tres son el reporte de detalle y entran; dos son el resumen mensual, que
-    ya no alcanza. El archivo tiene que traer exactamente las horas de los
-    tres, y el nombre tiene que decir que faltan los otros dos.
+    Tres son el reporte de detalle y entran solos. Los otros dos son el
+    resumen mensual, que se acepta, pero a `config/mapeo.yaml` todavía le
+    faltan el usuario y el mail de Alexis y el número de proyecto de
+    Victorius 3, y esas columnas no se inventan: esos dos archivos no entran
+    y el nombre del archivo lo dice.
     """
     entrada_real = RAIZ / "input" / "2026-08"
     (tmp_path / "config").mkdir()
@@ -488,6 +490,136 @@ def test_punta_a_punta_con_los_cinco_exports_reales(tmp_path):
     for nombre in resumidos:
         assert nombre in texto
     assert "resumen mensual" in texto
+
+    # El motivo de cada uno nombra el dato que falta y trae el YAML pegable.
+    assert "Alexis Carnero" in texto
+    assert "GI2680001" in texto
+    assert "numero_proyecto:" in texto
+    assert "mail:" in texto
+
+
+def test_punta_a_punta_completo_con_el_mapeo_de_prueba(tmp_path):
+    """Los cinco desarrolladores adentro: 306.0 h exactas.
+
+    Mismo input real, pero con un mapeo que sí tiene el usuario y el mail de
+    Alexis y el número de proyecto de Victorius 3 (inventados: viven en el
+    fixture, nunca en config/mapeo.yaml). Con eso, los dos resúmenes
+    mensuales entran y el archivo sale limpio.
+    """
+    (tmp_path / "config").mkdir()
+    shutil.copy(
+        FIXTURES / "mapeo-completo-de-prueba.yaml", tmp_path / "config" / "mapeo.yaml"
+    )
+    shutil.copytree(RAIZ / "input" / "2026-08", tmp_path / "input" / "2026-08")
+
+    assert procesar_mes("2026-08", tmp_path) == 0
+
+    hoja = hoja_de(tmp_path, LIMPIO)
+    assert horas_de(hoja) == 306.0
+    assert hoja.max_row - 1 == 70
+
+    nombres = {hoja.cell(row=f, column=3).value for f in range(2, hoja.max_row + 1)}
+    assert nombres == {
+        "Alexis Carnero",
+        "Franco Dodera",
+        "Lautaro Zalazar",
+        "Luciano Carducci",
+        "Matias Zalazar",
+    }
+
+    texto = informe(tmp_path)
+    assert "5 desarrollador/es en el archivo:" in texto
+    assert "NO ENTRARON" not in texto
+
+
+def test_punta_a_punta_completo_las_filas_del_resumen_van_enteras(tmp_path):
+    """Las tres columnas que el partner necesita llenas, llenas."""
+    (tmp_path / "config").mkdir()
+    shutil.copy(
+        FIXTURES / "mapeo-completo-de-prueba.yaml", tmp_path / "config" / "mapeo.yaml"
+    )
+    shutil.copytree(RAIZ / "input" / "2026-08", tmp_path / "input" / "2026-08")
+    assert procesar_mes("2026-08", tmp_path) == 0
+
+    hoja = hoja_de(tmp_path, LIMPIO)
+    filas = {}
+    for f in range(2, hoja.max_row + 1):
+        valores = [hoja.cell(row=f, column=c).value for c in range(1, 11)]
+        filas.setdefault(valores[2], []).append(valores)
+
+    for nombre, usuario, mail, numero in (
+        ("Lautaro Zalazar", "lzalazar", "lautaro.zalazar@cunix.net", "GI2680001-DE-PRUEBA"),
+        ("Alexis Carnero", "acarnero-de-prueba", "alexis.carnero@ejemplo-de-prueba.invalid", "PR2510126"),
+    ):
+        for valores in filas[nombre]:
+            assert valores[3] == usuario
+            assert valores[4] == mail
+            assert valores[9] == numero
+            # Lo que el resumen mensual no trae y el partner sí acepta vacío.
+            assert valores[8] is None
+            assert valores[0].hour == 0 and valores[0].minute == 0
+
+
+def test_el_informe_dice_de_que_export_salio_cada_desarrollador(tmp_path):
+    (tmp_path / "config").mkdir()
+    shutil.copy(
+        FIXTURES / "mapeo-completo-de-prueba.yaml", tmp_path / "config" / "mapeo.yaml"
+    )
+    shutil.copytree(RAIZ / "input" / "2026-08", tmp_path / "input" / "2026-08")
+    assert procesar_mes("2026-08", tmp_path) == 0
+
+    # Sólo las líneas del listado de desarrolladores, que llevan sus horas.
+    lineas = [l for l in informe(tmp_path).splitlines() if " registro/s, " in l]
+    origenes = {l.split(" (")[0].strip("  - "): l.split("[")[1].rstrip("]") for l in lineas}
+    assert origenes == {
+        "Alexis Carnero": "resumen mensual",
+        "Franco Dodera": "reporte de detalle",
+        "Lautaro Zalazar": "resumen mensual",
+        "Luciano Carducci": "reporte de detalle",
+        "Matias Zalazar": "reporte de detalle",
+    }
+
+
+def test_el_informe_avisa_de_las_columnas_vacias_del_resumen_mensual(tmp_path):
+    """No frena nada: es lo que el dueño necesita para decidir si lo manda."""
+    (tmp_path / "config").mkdir()
+    shutil.copy(
+        FIXTURES / "mapeo-completo-de-prueba.yaml", tmp_path / "config" / "mapeo.yaml"
+    )
+    shutil.copytree(RAIZ / "input" / "2026-08", tmp_path / "input" / "2026-08")
+    assert procesar_mes("2026-08", tmp_path) == 0
+
+    texto = informe(tmp_path)
+    assert "SIN DESCRIPCIÓN Y SIN HORA DE INICIO" in texto
+    assert "Alexis Carnero" in texto
+    assert "Lautaro Zalazar" in texto
+    assert "reporte de detalle y corré de nuevo" in texto
+    # Los que exportaron con el detalle no aparecen en esa lista.
+    aviso = texto.split("SIN DESCRIPCIÓN Y SIN HORA DE INICIO")[1].split("Esto NO")[0]
+    assert "Franco Dodera" not in aviso
+
+
+def test_los_tres_exports_de_detalle_siguen_dando_las_mismas_horas(tmp_path):
+    """62.5, 76.5 y 8.0: lo que este cambio no puede haber tocado."""
+    (tmp_path / "config").mkdir()
+    shutil.copy(
+        FIXTURES / "mapeo-completo-de-prueba.yaml", tmp_path / "config" / "mapeo.yaml"
+    )
+    shutil.copytree(RAIZ / "input" / "2026-08", tmp_path / "input" / "2026-08")
+    assert procesar_mes("2026-08", tmp_path) == 0
+
+    hoja = hoja_de(tmp_path, LIMPIO)
+    horas = {}
+    for f in range(2, hoja.max_row + 1):
+        nombre = hoja.cell(row=f, column=3).value
+        segundos = hoja.cell(row=f, column=2).value.total_seconds()
+        horas[nombre] = horas.get(nombre, 0.0) + segundos / 3600
+
+    assert horas["Franco Dodera"] == 62.5
+    assert horas["Matias Zalazar"] == 76.5
+    assert horas["Luciano Carducci"] == 8.0
+    assert horas["Lautaro Zalazar"] == 9.0
+    assert horas["Alexis Carnero"] == 150.0
 
 
 def test_punta_a_punta_el_project_number_de_luciano_es_210(tmp_path):

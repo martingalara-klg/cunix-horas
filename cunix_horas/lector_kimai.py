@@ -6,19 +6,23 @@ distinto. `leer()` mira el archivo y elige el lector; los tres devuelven
 
     .csv                    -> timesheet plano en CSV
     .xlsx con A1='Date'     -> timesheet plano en XLSX
-    .xlsx con B1='Total'    -> resumen mensual: ya no se acepta (ver abajo)
+    .xlsx con B1='Total'    -> resumen mensual (la grilla de días)
     cualquier otra cosa     -> ErrorLectura
 
 Nunca se adivina: si la fila 1 no es ninguna de esas, se falla diciendo qué
 se encontró y qué formatos se reconocen.
 
-**El resumen mensual dejó de alcanzar.** El partner ahora recibe el detalle
-plano de todos los desarrolladores, una fila por registro de tiempo, y ese
-export no trae el usuario de Kimai, ni el mail, ni la descripción, ni la hora
-de inicio: saldrían filas incompletas y nadie se enteraría. El lector sigue
-existiendo y sigue probado —el parseo costó trabajo y el partner podría
-volver atrás—, pero el punto de entrada lo rechaza. Para volver a aceptarlo
-alcanza con cambiar una línea, señalada más abajo.
+**Los dos reportes sirven, y no dan lo mismo.** El de detalle trae las diez
+columnas que el partner factura. El resumen mensual trae las horas ya sumadas
+por día: no trae la hora de inicio, ni el usuario, ni el mail, ni la
+descripción, ni el número de proyecto.
+
+De esos cinco, la descripción vacía y la hora en 00:00 son aceptables —el
+archivo de referencia del partner tiene 112 de 160 filas sin descripción y una
+con la hora en 00:00—, pero el usuario, el mail y el número de proyecto tienen
+que ir llenos. Esos tres se completan desde `config/mapeo.yaml`, en
+`completado.py`, y si el mapeo no los tiene **ese archivo no entra**. Nunca se
+inventan y nunca salen en blanco.
 """
 from __future__ import annotations
 
@@ -41,8 +45,6 @@ __all__ = [
     "Registro",
     "codigo_de_proyecto",
     "leer",
-    # Sigue re-exportado aunque `leer()` ya no lo use: el lector del resumen
-    # mensual queda vivo y probado por si el partner vuelve a ese formato.
     "leer_resumen_mensual",
     "serial_a_fecha",
 ]
@@ -75,25 +77,6 @@ def _error_de_formato_desconocido(
     )
 
 
-def _error_de_resumen_mensual(ruta: Path) -> ErrorLectura:
-    """Ese export no trae lo que el partner pide ahora en cada fila."""
-    return ErrorLectura(
-        f"{ruta.name} es un resumen mensual de Kimai (la grilla de días), y "
-        f"ese export ya no alcanza.\n"
-        f"  El partner ahora pide el detalle: una fila por cada carga de "
-        f"horas, con la hora de inicio, el nombre y el mail del "
-        f"desarrollador, la descripción de lo que hizo y el número de "
-        f"proyecto.\n"
-        f"  El resumen mensual no trae nada de eso: sólo las horas sumadas "
-        f"por día. Generarlo igual dejaría esas columnas en blanco y el "
-        f"partner recibiría un archivo incompleto sin que nadie lo note.\n"
-        f"  Volvé a exportar las horas de esta persona desde Kimai con el "
-        f"reporte de detalle, el mismo que usaste para los demás, y dejá ese "
-        f"archivo en lugar de éste.\n"
-        f"  Los demás desarrolladores se procesan igual: sólo falta éste."
-    )
-
-
 def leer(ruta: Path) -> list[Registro]:
     """Lee un export de Kimai, en cualquiera de sus tres formatos."""
     if ruta.suffix.lower() == EXTENSION_CSV:
@@ -110,8 +93,10 @@ def leer(ruta: Path) -> list[Registro]:
 
     columna, texto = MARCA_RESUMEN_MENSUAL
     if encabezado.get(columna, "").strip() == texto:
-        # Para volver a aceptar el resumen mensual: reemplazar esta línea por
-        #     return leer_resumen_mensual(ruta, hoja)
-        raise _error_de_resumen_mensual(ruta)
+        # Los registros salen marcados como `origen=ORIGEN_RESUMEN_MENSUAL`:
+        # `completado.completar_desde_mapeo` es el que les pone el usuario, el
+        # mail y el número de proyecto, o frena el archivo si el mapeo no los
+        # tiene.
+        return leer_resumen_mensual(ruta, hoja)
 
     raise _error_de_formato_desconocido(ruta, encabezado)

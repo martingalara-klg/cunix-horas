@@ -4,8 +4,9 @@ Convierte los exports de Kimai en **el archivo mensual que recibe el partner**.
 
 ## Uso mensual
 
-1. En Kimai, exportar las horas del mes, **un archivo por desarrollador**,
-   con el **reporte de detalle** (ver abajo).
+1. En Kimai, exportar las horas del mes, **un archivo por desarrollador**.
+   Conviene el **reporte de detalle**, que trae las diez columnas; el de
+   resumen mensual también sirve, con lo que se pierde (ver abajo).
 2. Crear la carpeta del mes y poner los archivos adentro:
    `input/2025-10/`  (el nombre de cada archivo da igual)
 3. Doble clic en `generar.bat`, o desde una terminal:
@@ -76,30 +77,60 @@ Cuando no falla nada, el nombre es el limpio.
 ## Qué exports de Kimai lee
 
 Según con qué reporte exportes, Kimai da un archivo distinto. La herramienta
-lee los dos del **reporte de detalle** y no hay que decirle cuál es: lo
-detecta sola.
+lee los tres y no hay que decirle cuál es: lo detecta sola.
 
 - **Timesheet en Excel** (`.xlsx` con `Date` en A1): una fila por registro de
-  tiempo. Es el que se viene usando.
+  tiempo. Es el **reporte de detalle**, el que conviene usar.
 - **Timesheet en CSV** (`.csv`): lo mismo, pero en texto. Kimai lo escribe con
   la fecha al derecho (`2026-08-31`) y la duración en horas y minutos
   (`2:00`).
+- **Resumen mensual** (`.xlsx` con `Total` en B1): la grilla de días, con las
+  horas ya sumadas. Sirve, pero trae menos (abajo).
 
-Si un archivo no es ninguno de esos dos, **ese** desarrollador no entra al
+Si un archivo no es ninguno de esos tres, **ese** desarrollador no entra al
 archivo del mes, el motivo dice qué encontró en la fila 1 y qué formatos se
 reconocen, y el archivo sale marcado como INCOMPLETO. Los demás entran igual.
 
-### El resumen mensual ya no sirve
+### Qué se pierde con el resumen mensual
 
-El export de **resumen mensual** (`.xlsx` con `Total` en B1, la grilla de
-días) se sigue reconociendo, pero **ya no se acepta**: no trae la hora de
-inicio, ni el usuario, ni el mail, ni la descripción, ni el número de
-proyecto. Son las horas ya sumadas por día. Aceptarlo dejaría esas columnas en
-blanco y el partner recibiría filas incompletas sin que nadie lo note.
+Ese export no trae cinco de las diez columnas: la hora de inicio, el usuario,
+el mail, la descripción y el número de proyecto.
 
-Para arreglarlo: volver a exportar a esa persona desde Kimai con el reporte de
-detalle, el mismo que usaste para el resto, y dejar ese archivo en lugar del
-otro.
+**Dos se pueden dejar vacías, y el archivo sale igual:**
+
+- la **descripción**, porque el partner la acepta vacía: 112 de las 160 filas
+  de su archivo de referencia lo están;
+- la **hora de inicio**, que queda en `00:00`: una de sus 160 filas está así.
+
+`_validacion.txt` te dice, por desarrollador, de qué reporte salieron sus
+filas, y avisa cuáles van sin descripción y sin hora de inicio. No frena nada:
+es para que decidas si lo mandás así o volvés a exportar a esa persona con el
+reporte de detalle.
+
+**Las otras tres no pueden ir vacías**, porque las 160 filas del partner las
+tienen llenas, sin una sola excepción: el **usuario**, el **mail** y el
+**número de proyecto**. Esas tres se completan desde `config/mapeo.yaml`, y
+**nunca se adivinan**:
+
+| Columna | De dónde sale |
+|---|---|
+| `Name` | del propio archivo |
+| `User` | la **clave** de la persona en `personas:` |
+| `E-mail` | `mail:` de esa persona |
+| `Project number` | `numero_proyecto:` de ese proyecto |
+
+Si al mapeo le falta alguno de los tres, **ese archivo no entra**. El motivo
+nombra al desarrollador o al proyecto y trae el bloque listo para pegar en
+`config/mapeo.yaml`. Los demás desarrolladores entran igual.
+
+El `Project number` es el que menos se puede improvisar: **no** es el código
+entre corchetes. El proyecto `[AD2690002]` tiene `Project number` `210`. No se
+deduce de nada, así que o está declarado o el archivo frena. Y dejarlo vacío
+no es opción: el partner factura sobre esa columna.
+
+Si exportaste con el **reporte de detalle**, nada de esto aplica: el usuario,
+el mail y el número vienen de Kimai, y el mapeo no interviene aunque declare
+otra cosa.
 
 ## Qué dice `_validacion.txt`
 
@@ -117,6 +148,8 @@ decidir qué se envía:
   formato anterior, un consolidado marcado como INCOMPLETO de otra corrida, o
   archivos que dejaste vos ahí. La herramienta no los borra, pero los nombra
   uno por uno: **esos no van en el envío del mes.**
+- **De qué reporte salió cada desarrollador**, y el aviso de quiénes van sin
+  descripción y sin hora de inicio por haber exportado el resumen mensual.
 - **Los proyectos sin mapear**, con el nombre que se usó y el bloque listo para
   pegar en `config/mapeo.yaml` si querés que el partner vea otro.
 - **Los avisos de validación**, agrupados por desarrollador: días hábiles sin
@@ -134,17 +167,47 @@ es un aviso.
 Con 160 filas de cinco desarrolladores en un solo archivo, una fila perdida no
 se ve nunca a ojo.
 
-## El mapeo ya no es obligatorio
+## Qué hace falta en `config/mapeo.yaml`
 
-`config/mapeo.yaml` sirve para **pulir los nombres** que ve el partner, y nada
-más:
+Depende de con qué reporte exportó cada persona.
+
+**Si exportó con el reporte de detalle, el mapeo es sólo un pulido de
+nombres:**
 
 - Un proyecto que no esté declarado **no frena nada**: sale con el nombre que
   trae Kimai, y queda listado en `_validacion.txt` con el bloque listo para
   pegar por si querés cambiarlo. Cada fila lleva su `Project number`, así que
   la trazabilidad no depende del mapeo.
-- La sección `personas:` **es opcional**: el nombre, el usuario y el mail de
-  cada desarrollador vienen de Kimai.
+- La sección `personas:` es opcional: el nombre, el usuario y el mail de cada
+  desarrollador vienen de Kimai.
+
+**Si exportó con el resumen mensual, el mapeo es obligatorio para esa persona
+y para sus proyectos**, porque ese reporte no trae el usuario, el mail ni el
+número de proyecto:
+
+```yaml
+personas:
+  lzalazar:                                   # esta clave ES el User
+    nombre: "Lautaro Zalazar"                 # como lo muestra Kimai
+    archivo: "L Zalazar"
+    mail: "lautaro.zalazar@cunix.net"         # la columna E-mail
+
+proyectos:
+  AD2690002:                                  # el código entre corchetes
+    cliente: "Sistemas - C.UNIX"
+    proyecto: "VictoriusCP2"
+    numero_proyecto: "210"                    # el Project number de Kimai
+```
+
+- La **clave** de la persona es el `User` que ve el partner, y el `nombre:`
+  tiene que coincidir exactamente con lo que muestra Kimai: es lo único que
+  el resumen mensual trae para identificarla.
+- `mail:` y `numero_proyecto:` son **opcionales** en el archivo, y sólo los
+  usan las filas del resumen mensual. Si los escribís vacíos, el mapeo no
+  carga: mejor fallar con el nombre de la entrada que dejar una columna en
+  blanco del otro lado.
+- `numero_proyecto:` **no** es el código entre corchetes. Miralo en Kimai, en
+  la ficha del proyecto.
 
 ### El nombre del archivo de salida
 

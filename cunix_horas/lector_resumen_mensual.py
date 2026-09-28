@@ -31,6 +31,7 @@ from datetime import date
 from pathlib import Path
 
 from cunix_horas.kimai_comun import (
+    ORIGEN_RESUMEN_MENSUAL,
     PRIMERA_COL_DE_DIA,
     ErrorLectura,
     HojaXlsx,
@@ -424,6 +425,10 @@ def leer_resumen_mensual(ruta: Path, hoja: HojaXlsx) -> list[Registro]:
                     ),
                     actividad=etiqueta,
                     texto_proyecto=texto_proyecto,
+                    # Marca el origen para que `completado` sepa que a este
+                    # registro le faltan el usuario, el mail y el número de
+                    # proyecto, y que esos tres salen del mapeo.
+                    origen=ORIGEN_RESUMEN_MENSUAL,
                 )
             )
 
