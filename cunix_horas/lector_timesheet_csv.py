@@ -4,6 +4,9 @@ Mismo contenido que el timesheet .xlsx, pero con dos diferencias que importan:
 la fecha viene en ISO (`2026-08-31`) en vez de serial de Excel, y la duración
 viene en `H:MM` (`2:00`) en vez de fracción de día.
 
+Trae las mismas columnas del detalle que el .xlsx (`From`, `Name`, `E-mail`,
+`Customer`, `Description`, `Project number`), con los mismos nombres.
+
 Las columnas se leen **por nombre de encabezado**, no por posición: Kimai
 agrega y reordena columnas de una versión a otra, y leer por posición haría
 que un export nuevo imputara horas equivocadas sin avisar.
@@ -28,13 +31,27 @@ import re
 from datetime import date
 from pathlib import Path
 
-from cunix_horas.kimai_comun import ErrorLectura, Registro, codigo_de_proyecto
+from cunix_horas.kimai_comun import (
+    ErrorLectura,
+    Registro,
+    codigo_de_proyecto,
+    hora_de_inicio,
+)
 
 COL_FECHA = "Date"
 COL_DURACION = "Duration"
 COL_USERNAME = "User"
 COL_PROYECTO = "Project"
 COL_ACTIVIDAD = "Activity"
+
+# Columnas del detalle plano que ahora recibe el partner. Acá las columnas se
+# leen por nombre, así que una que falte no corre a las demás: queda vacía.
+COL_HORA_INICIO = "From"
+COL_NOMBRE = "Name"
+COL_EMAIL = "E-mail"
+COL_CLIENTE = "Customer"
+COL_DESCRIPCION = "Description"
+COL_NUMERO_PROYECTO = "Project number"
 
 ENCABEZADOS_ESPERADOS = (
     COL_FECHA,
@@ -191,6 +208,15 @@ def leer_timesheet_csv(ruta: Path) -> list[Registro]:
                 ),
                 actividad=(fila.get(COL_ACTIVIDAD) or "").strip(),
                 texto_proyecto=texto_proyecto,
+                hora_inicio=hora_de_inicio(
+                    fila.get(COL_HORA_INICIO) or "",
+                    f"{ruta.name}, fila {nro_fila}, columna {COL_HORA_INICIO}",
+                ),
+                nombre=(fila.get(COL_NOMBRE) or "").strip(),
+                email=(fila.get(COL_EMAIL) or "").strip(),
+                descripcion=(fila.get(COL_DESCRIPCION) or "").strip(),
+                numero_proyecto=(fila.get(COL_NUMERO_PROYECTO) or "").strip(),
+                texto_cliente=(fila.get(COL_CLIENTE) or "").strip(),
             )
         )
     return registros

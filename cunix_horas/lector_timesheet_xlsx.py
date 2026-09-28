@@ -7,6 +7,14 @@ desde siempre, y el encabezado se verifica antes de leer nada.
 Una fila sin fecha pero con datos no se saltea: son horas que no llegarían al
 Excel del cliente y nadie se enteraría. Se falla nombrando el archivo y la
 fila. Una fila completamente vacía sí se saltea, que no pierde nada.
+
+Desde que el partner pide el detalle plano se leen también las columnas
+`From` (B), `Name` (E), `E-mail` (G), `Customer` (I), `Description` (L) y
+`Project number` (R). Ojo con las dos últimas: `Description` viene vacía en
+la mayoría de los registros y eso es válido, y `Project number` **no** es el
+código entre corchetes de `Project` (el proyecto `[AD2690002] ...` tiene
+número `210`). Los dos se conservan: el del corchete es la clave del mapeo y
+el número va tal cual al archivo del partner.
 """
 from __future__ import annotations
 
@@ -18,21 +26,44 @@ from cunix_horas.kimai_comun import (
     HojaXlsx,
     Registro,
     codigo_de_proyecto,
+    hora_de_inicio,
     serial_a_fecha,
 )
 
 COL_FECHA = "A"
+COL_HORA_INICIO = "B"
 COL_DURACION = "D"
+COL_NOMBRE = "E"
 COL_USERNAME = "F"
+COL_EMAIL = "G"
+COL_CLIENTE = "I"
 COL_PROYECTO = "J"
 COL_ACTIVIDAD = "K"
+COL_DESCRIPCION = "L"
+COL_NUMERO_PROYECTO = "R"
 
+# Las que tienen que estar sí o sí: sin ellas no hay ni horas ni a quién
+# imputárselas, y el archivo no se lee.
 ENCABEZADOS_ESPERADOS = {
     COL_FECHA: "Date",
     COL_DURACION: "Duration",
     COL_USERNAME: "User",
     COL_PROYECTO: "Project",
     COL_ACTIVIDAD: "Activity",
+}
+
+# Las que agregó el entregable nuevo (detalle plano). Como este lector toma
+# las columnas por posición, una versión de Kimai que las reordene metería el
+# dato equivocado en cada una. Por eso se verifican igual, pero **sólo si la
+# columna existe en la fila 1**: un archivo que directamente no las trae se
+# lee con esos campos vacíos, en vez de fallar entero.
+ENCABEZADOS_DEL_DETALLE = {
+    COL_HORA_INICIO: "From",
+    COL_NOMBRE: "Name",
+    COL_EMAIL: "E-mail",
+    COL_CLIENTE: "Customer",
+    COL_DESCRIPCION: "Description",
+    COL_NUMERO_PROYECTO: "Project number",
 }
 
 
@@ -46,6 +77,27 @@ def _verificar_encabezados(encabezado: dict[str, str], ruta: Path) -> None:
         raise ErrorLectura(
             f"{ruta.name} no tiene el formato de export de Kimai. "
             f"Se esperaba en la fila 1: {', '.join(faltantes)}"
+        )
+    _verificar_encabezados_del_detalle(encabezado, ruta)
+
+
+def _verificar_encabezados_del_detalle(
+    encabezado: dict[str, str], ruta: Path
+) -> None:
+    """Las columnas del detalle, si están, tienen que estar donde van."""
+    corridas = [
+        f"{col}={encabezado[col]!r} (se esperaba {esperado!r})"
+        for col, esperado in ENCABEZADOS_DEL_DETALLE.items()
+        if col in encabezado and encabezado[col].strip() != esperado
+    ]
+    if corridas:
+        raise ErrorLectura(
+            f"{ruta.name}: las columnas de la fila 1 no están donde se "
+            f"esperaba: {', '.join(corridas)}.\n"
+            f"  Leerlas igual pondría el dato equivocado en cada columna del "
+            f"archivo que recibe el partner.\n"
+            f"  Exportá de nuevo desde Kimai con el reporte de detalle, sin "
+            f"agregar ni mover columnas a mano."
         )
 
 
@@ -119,6 +171,16 @@ def leer_timesheet_xlsx(ruta: Path, hoja: HojaXlsx) -> list[Registro]:
                 ),
                 actividad=fila.get(COL_ACTIVIDAD, ""),
                 texto_proyecto=texto_proyecto,
+                hora_inicio=hora_de_inicio(
+                    fila.get(COL_HORA_INICIO, ""),
+                    f"{ruta.name}, fila {nro_fila}, columna {COL_HORA_INICIO} "
+                    f"({ENCABEZADOS_DEL_DETALLE[COL_HORA_INICIO]})",
+                ),
+                nombre=fila.get(COL_NOMBRE, "").strip(),
+                email=fila.get(COL_EMAIL, "").strip(),
+                descripcion=fila.get(COL_DESCRIPCION, "").strip(),
+                numero_proyecto=fila.get(COL_NUMERO_PROYECTO, "").strip(),
+                texto_cliente=fila.get(COL_CLIENTE, "").strip(),
             )
         )
     return registros

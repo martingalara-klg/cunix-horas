@@ -17,7 +17,7 @@ import re
 import xml.etree.ElementTree as ET
 import zipfile
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, time, timedelta
 from pathlib import Path
 
 NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
@@ -30,6 +30,7 @@ EPOCA_EXCEL = date(1899, 12, 30)
 PRIMERA_COL_DE_DIA = "C"
 
 _CODIGO = re.compile(r"^\s*\[([^\]]+)\]")
+_HORA = re.compile(r"^\s*(\d{1,2}):([0-5]\d)(?::([0-5]\d))?\s*$")
 _SOLO_LETRAS = re.compile(r"[A-Z]+")
 
 
@@ -39,7 +40,16 @@ class ErrorLectura(Exception):
 
 @dataclass(frozen=True)
 class Registro:
-    """Un registro de tiempo individual de Kimai."""
+    """Un registro de tiempo individual de Kimai.
+
+    Los primeros cinco campos son los que necesitaba el Excel pivoteado por
+    desarrollador. Los de abajo son los que pide el detalle plano que ahora
+    recibe el partner: una fila por registro, con la hora de inicio, el
+    nombre para mostrar, el mail, la descripción y el número de proyecto.
+
+    Todos los agregados van **al final y con valor por defecto**, para no
+    romper las construcciones posicionales que ya existen.
+    """
 
     fecha: date
     horas: float
@@ -48,6 +58,23 @@ class Registro:
     actividad: str
     # Al final para no romper las construcciones posicionales existentes.
     texto_proyecto: str = ""
+    # Hora de inicio (columna `From` de Kimai). El entregable la combina con
+    # `fecha` en una sola celda de fecha y hora.
+    hora_inicio: time | None = None
+    # Nombre para mostrar ('Matias Zalazar'), distinto de `username`
+    # ('mzalazar'). Los dos viajan: el username es la clave del mapeo.
+    nombre: str = ""
+    email: str = ""
+    # Vacía en la mayoría de los registros: es un campo opcional de Kimai.
+    descripcion: str = ""
+    # El `Project number` de Kimai, que **no** es el código entre corchetes:
+    # el proyecto '[AD2690002] ...' tiene número de proyecto '210'. El código
+    # es la clave del mapeo; el número va tal cual al entregable.
+    numero_proyecto: str = ""
+    # Texto crudo de la columna `Customer`, por el mismo motivo por el que se
+    # conserva el del proyecto: de ahí sale el nombre a mostrar cuando el
+    # proyecto no está en el mapeo.
+    texto_cliente: str = ""
 
 
 @dataclass(frozen=True)
@@ -96,6 +123,32 @@ def codigo_de_proyecto(texto: str, ubicacion: str = "") -> str:
             f"entre corchetes, como '[CO2610170] Nombre del proyecto'."
         )
     return coincidencia.group(1)
+
+
+def hora_de_inicio(texto: str, ubicacion: str = "") -> time | None:
+    """Convierte la columna `From` de Kimai a `time`. '13:00' -> time(13, 0).
+
+    Vacía devuelve `None`: Kimai puede no traerla y no es un dato que se
+    pueda inventar. Pero si trae algo que no es una hora **se falla**, en vez
+    de dejarlo pasar: en el entregable esa hora forma parte de la celda de
+    fecha, y una hora mal leída movería el registro de día.
+
+    `ubicacion` es el archivo y la fila de donde salió el texto, que sólo
+    conoce quien llama.
+    """
+    limpio = (texto or "").strip()
+    if not limpio:
+        return None
+    coincidencia = _HORA.match(limpio)
+    if coincidencia is None or int(coincidencia.group(1)) > 23:
+        prefijo = f"{ubicacion}: " if ubicacion else ""
+        raise ErrorLectura(
+            f"{prefijo}La hora de inicio {texto!r} no tiene formato de hora.\n"
+            f"  Se esperaba la columna From como 'HH:MM', por ejemplo '13:00'.\n"
+            f"  Exportá de nuevo desde Kimai sin editar el archivo a mano."
+        )
+    horas, minutos, segundos = coincidencia.groups()
+    return time(int(horas), int(minutos), int(segundos or 0))
 
 
 def letra_desde_indice(indice: int) -> str:

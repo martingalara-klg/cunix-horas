@@ -4,8 +4,8 @@ Convierte los exports de Kimai en los Excel mensuales que recibe el partner.
 
 ## Uso mensual
 
-1. En Kimai, exportar las horas del mes, **un archivo por desarrollador**.
-   Sirve cualquiera de los tres exports (ver abajo).
+1. En Kimai, exportar las horas del mes, **un archivo por desarrollador**,
+   con el **reporte de detalle** (ver abajo).
 2. Crear la carpeta del mes y poner los archivos adentro:
    `input/2025-10/`  (el nombre de cada archivo da igual)
 3. Doble clic en `generar.bat`, o desde una terminal:
@@ -20,30 +20,36 @@ Convierte los exports de Kimai en los Excel mensuales que recibe el partner.
 ## Qué exports de Kimai lee
 
 Según con qué reporte exportes, Kimai da un archivo distinto. La herramienta
-lee los tres y no hay que decirle cuál es: lo detecta sola.
+lee los dos del **reporte de detalle** y no hay que decirle cuál es: lo
+detecta sola.
 
 - **Timesheet en Excel** (`.xlsx` con `Date` en A1): una fila por registro de
   tiempo. Es el que se viene usando.
 - **Timesheet en CSV** (`.csv`): lo mismo, pero en texto. Kimai lo escribe con
   la fecha al derecho (`2026-08-31`) y la duración en horas y minutos
   (`2:00`).
-- **Resumen mensual** (`.xlsx` con `Total` en B1): la grilla de días, con la
-  misma forma que el Excel que se manda. De este se leen **sólo las filas de
-  actividad**; las de proyecto y de cliente son subtotales. Antes de dar nada
-  por bueno, la herramienta suma lo que leyó y lo compara contra el total que
-  el propio archivo declara: si no cierran, ese archivo no se genera y el
-  motivo queda en `_validacion.txt`.
 
-Si un archivo no es ninguno de los tres, **ese** archivo no se genera y el
+Si un archivo no es ninguno de esos dos, **ese** archivo no se genera y el
 motivo dice qué encontró en la fila 1 y qué formatos se reconocen. Los demás
 desarrolladores se generan igual.
 
-Una cosa del resumen mensual: **no trae el usuario de Kimai**, sólo el nombre
-para mostrar (`Lautaro Zalazar`). La herramienta busca en `config/mapeo.yaml`
-primero por usuario y, si no lo encuentra, por el `nombre:` que ya está
-cargado en cada persona. Por eso el `nombre:` tiene que estar escrito igual
-que en Kimai. Si dos personas tienen el mismo `nombre:`, frena y lo dice en
-vez de elegir una.
+### El resumen mensual ya no sirve
+
+El export de **resumen mensual** (`.xlsx` con `Total` en B1, la grilla de
+días) se sigue reconociendo, pero **ya no se acepta**.
+
+El partner cambió lo que recibe: ahora pide el detalle de cada carga de
+horas, una fila por registro, con la **hora de inicio**, el **nombre** y el
+**mail** del desarrollador, la **descripción** de lo que hizo y el **número
+de proyecto**. El resumen mensual no trae nada de eso: son las horas ya
+sumadas por día. Generarlo igual dejaría esas columnas en blanco y el partner
+recibiría un archivo incompleto sin que nadie lo note.
+
+Si aparece uno de esos archivos en `input/`, **ese** archivo no se genera, el
+motivo queda en `_validacion.txt` y los demás desarrolladores salen igual.
+Para arreglarlo: volver a exportar a esa persona desde Kimai con el reporte
+de detalle, el mismo que usaste para el resto, y dejar ese archivo en lugar
+del otro.
 
 ## Qué dice `_validacion.txt`
 
@@ -130,6 +136,25 @@ las horas reales del export, y ese error crece con la cantidad de celdas
 0.0033 h). `_validacion.txt` muestra el desvío exacto de cada Excel **siempre**,
 como dato, y si pasa de 0.25 h además lo avisa: no es un error de carga, pero
 decidís vos si importa para facturar.
+
+## Qué dato de Kimai va a parar a dónde
+
+De cada registro de tiempo se conservan, además de la fecha y las horas:
+
+| Dato de Kimai | Para qué |
+|---|---|
+| `From` (hora de inicio) | Va junto con la fecha en el entregable |
+| `Name` (`Matias Zalazar`) | Nombre para mostrar |
+| `User` (`mzalazar`) | Clave de `personas:` en `config/mapeo.yaml` |
+| `E-mail` | Va al entregable |
+| `Customer` y `Project` (texto crudo) | De ahí sale el nombre si el proyecto no está mapeado |
+| `Description` | Lo que hizo; **puede venir vacía y está bien** |
+| `Project number` | Va tal cual al entregable |
+
+Ojo con las dos últimas columnas de proyecto, que se parecen y no son lo
+mismo: el código entre corchetes de `Project` (`[AD2690002]`) es el que se
+busca en `config/mapeo.yaml`, y el `Project number` (`210`) es el que ve el
+partner. Se guardan los dos.
 
 ## Cuando aparece un proyecto o un dev nuevo
 

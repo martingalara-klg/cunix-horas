@@ -1,11 +1,28 @@
-"""Tests del lector de resumen mensual (.xlsx con B1='Total')."""
+"""Tests del lector de resumen mensual (.xlsx con B1='Total').
+
+Este formato ya no se acepta como entrada: no trae el usuario de Kimai, ni
+el mail, ni la descripción, ni la hora de inicio, y el partner ahora pide
+todo eso en cada fila. `lector_kimai.leer()` lo rechaza (ver el bloque del
+final), pero el parseo sigue vivo por si el partner vuelve atrás, así que la
+cobertura que le costó trabajo ganarse se conserva entera: los tests de acá
+llaman al lector interno `leer_resumen_mensual` en vez del punto de entrada.
+"""
 import zipfile
 from datetime import date
+from pathlib import Path
 
 import pytest
 from conftest import FIXTURES
 
-from cunix_horas.lector_kimai import ErrorLectura, leer
+from cunix_horas.kimai_comun import ErrorLectura, leer_hoja
+from cunix_horas.lector_kimai import leer as leer_por_el_punto_de_entrada
+from cunix_horas.lector_resumen_mensual import leer_resumen_mensual
+
+
+def leer(ruta):
+    """El lector interno, salteando el punto de entrada que ahora rechaza."""
+    ruta = Path(ruta)
+    return leer_resumen_mensual(ruta, leer_hoja(ruta))
 
 LAUTARO = FIXTURES / "kimai-resumen-mensual-lautaro.xlsx"
 ALEXIS = FIXTURES / "kimai-resumen-mensual-alexis.xlsx"
@@ -486,3 +503,46 @@ def test_un_mes_sin_corrimiento_pasa_el_control_por_dia(tmp_path):
         (date(2026, 8, 3), 4.0),
         (date(2026, 8, 5), 2.0),
     ]
+
+
+# --- El punto de entrada ya no acepta este formato -------------------------
+# El entregable pasó a ser el detalle plano de todos los desarrolladores, una
+# fila por registro. El resumen mensual no trae los datos que van en esa
+# fila, así que generarlo daría filas incompletas sin que nadie se entere.
+
+
+@pytest.mark.parametrize("ruta", [LAUTARO, ALEXIS, MULTI])
+def test_el_punto_de_entrada_rechaza_el_resumen_mensual(ruta):
+    with pytest.raises(ErrorLectura):
+        leer_por_el_punto_de_entrada(ruta)
+
+
+def test_el_mensaje_nombra_el_archivo_y_los_datos_que_faltan():
+    with pytest.raises(ErrorLectura) as excepcion:
+        leer_por_el_punto_de_entrada(LAUTARO)
+    mensaje = str(excepcion.value)
+    assert LAUTARO.name in mensaje
+    assert "resumen mensual" in mensaje
+    for dato in ("hora de inicio", "nombre", "mail", "descripción", "número de proyecto"):
+        assert dato in mensaje
+
+
+def test_el_mensaje_dice_que_hay_que_volver_a_exportar_el_detalle():
+    with pytest.raises(ErrorLectura) as excepcion:
+        leer_por_el_punto_de_entrada(ALEXIS)
+    mensaje = str(excepcion.value)
+    assert "reporte de detalle" in mensaje
+    assert "Kimai" in mensaje
+
+
+def test_el_rechazo_no_frena_a_los_demas_desarrolladores():
+    """El mensaje se lo tiene que decir al dueño, que no lee el código."""
+    with pytest.raises(ErrorLectura) as excepcion:
+        leer_por_el_punto_de_entrada(MULTI)
+    assert "Los demás desarrolladores se procesan igual" in str(excepcion.value)
+
+
+def test_el_lector_interno_sigue_leyendo_los_totales_de_los_dos_reales():
+    """Lo que el parseo ya sabía hacer no se perdió al rechazar el formato."""
+    assert round(sum(r.horas for r in leer(LAUTARO)), 2) == 9.0
+    assert round(sum(r.horas for r in leer(ALEXIS)), 2) == 150.0

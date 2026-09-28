@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, time
 
 import pytest
 from conftest import FIXTURES
@@ -107,7 +107,7 @@ NS_HOJA = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 ENCABEZADOS = {"A": "Date", "D": "Duration", "F": "User", "J": "Project", "K": "Activity"}
 
 
-def _xlsx_de_kimai(ruta, filas_de_datos):
+def _xlsx_de_kimai(ruta, filas_de_datos, encabezados=None):
     """Arma un .xlsx mínimo con el formato de export de Kimai (inline strings)."""
 
     def fila_xml(nro, celdas):
@@ -117,7 +117,7 @@ def _xlsx_de_kimai(ruta, filas_de_datos):
         )
         return f'<row r="{nro}">{cel}</row>'
 
-    filas = [fila_xml(1, ENCABEZADOS)]
+    filas = [fila_xml(1, encabezados or ENCABEZADOS)]
     filas += [fila_xml(n, celdas) for n, celdas in enumerate(filas_de_datos, start=2)]
     hoja = (
         f'<?xml version="1.0"?><worksheet xmlns="{NS_HOJA}">'
@@ -231,3 +231,153 @@ def test_lector_kimai_no_reexporta_la_epoca_de_excel():
 
     assert "EPOCA_EXCEL" not in lector_kimai.__all__
     assert not hasattr(lector_kimai, "EPOCA_EXCEL")
+
+
+# --- El detalle plano: los datos que el partner pide en cada fila ----------
+# El entregable pasó a ser una fila por registro de tiempo, con la hora de
+# inicio, el nombre para mostrar, el mail, la descripción y el número de
+# proyecto. Kimai los trae; antes se descartaban porque el pivot no los usaba.
+
+ENCABEZADOS_CON_DETALLE = {
+    **ENCABEZADOS,
+    "B": "From",
+    "E": "Name",
+    "G": "E-mail",
+    "I": "Customer",
+    "L": "Description",
+    "R": "Project number",
+}
+
+
+def _fila_con_detalle(descripcion="Ticket R-000001", desde="09:30"):
+    fila = _fila()
+    fila.update(
+        {
+            "B": desde,
+            "E": "Matias Zalazar",
+            "G": "matias.zalazar@cunix.net",
+            "I": "[616050001] Instituto de Salud Publica de Chile",
+            "L": descripcion,
+            "R": "210",
+        }
+    )
+    if descripcion is None:
+        del fila["L"]
+    return fila
+
+
+def test_el_primer_registro_del_xlsx_real_trae_todo_el_detalle():
+    primero = leer(FIXTURES / "kimai-mzalazar.xlsx")[0]
+    assert primero.fecha == date(2026, 8, 31)
+    assert primero.hora_inicio == time(17, 0)
+    assert primero.nombre == "Matias Zalazar"
+    assert primero.username == "mzalazar"
+    assert primero.email == "matias.zalazar@cunix.net"
+    assert primero.descripcion == "Ticket R-012528"
+    assert primero.numero_proyecto == "CO2510115"
+    assert primero.texto_cliente == (
+        "[616050001] Instituto de Salud Publica de Chile"
+    )
+
+
+def test_el_nombre_para_mostrar_y_el_username_son_dos_campos_distintos():
+    registros = leer(FIXTURES / "kimai-mzalazar.xlsx")
+    assert {r.username for r in registros} == {"mzalazar"}
+    assert {r.nombre for r in registros} == {"Matias Zalazar"}
+
+
+def test_el_numero_de_proyecto_no_es_el_codigo_entre_corchetes():
+    """Luciano: el corchete dice AD2690002 y el Project number de Kimai es 210.
+
+    Son dos campos distintos y los dos hacen falta: el del corchete es la
+    clave del mapeo, el número va tal cual al archivo del partner (que en
+    septiembre mostró justo 210 para este proyecto). Confundirlos le
+    mandaría al partner un número de proyecto que no es el suyo.
+    """
+    registros = leer(FIXTURES / "kimai-timesheet-xlsx-lcarducci.xlsx")
+    assert {r.cod_proyecto for r in registros} == {"AD2690002"}
+    assert {r.numero_proyecto for r in registros} == {"210"}
+    assert all(r.numero_proyecto != r.cod_proyecto for r in registros)
+
+
+def test_el_primer_registro_de_luciano_trae_todo_el_detalle():
+    primero = leer(FIXTURES / "kimai-timesheet-xlsx-lcarducci.xlsx")[0]
+    assert primero.fecha == date(2026, 8, 31)
+    assert primero.hora_inicio == time(11, 0)
+    assert primero.nombre == "Luciano Carducci"
+    assert primero.username == "lcarducci"
+    assert primero.email == "luiciano.carducci@cunix.net"
+    assert primero.descripcion.startswith("Revisi")
+    assert primero.descripcion.endswith("EFS Aruba.")
+    assert primero.numero_proyecto == "210"
+    assert primero.texto_cliente == "CUNIX"
+
+
+def test_un_registro_del_xlsx_sin_descripcion_queda_vacio_y_no_rompe(tmp_path):
+    """En el archivo de septiembre del partner 112 de 160 filas no la traen."""
+    ruta = _xlsx_de_kimai(
+        tmp_path / "sin-descripcion.xlsx",
+        [_fila_con_detalle(descripcion=None), _fila_con_detalle(descripcion="")],
+        encabezados=ENCABEZADOS_CON_DETALLE,
+    )
+    registros = leer(ruta)
+    assert len(registros) == 2
+    assert [r.descripcion for r in registros] == ["", ""]
+    assert all(r.nombre == "Matias Zalazar" for r in registros)
+
+
+def test_un_xlsx_sin_las_columnas_del_detalle_se_sigue_leyendo(tmp_path):
+    """Los campos nuevos quedan vacíos; las horas, que es lo que factura, no."""
+    ruta = _xlsx_de_kimai(tmp_path / "viejo.xlsx", [_fila()])
+    registro = leer(ruta)[0]
+    assert registro.horas > 0
+    assert registro.hora_inicio is None
+    assert (registro.nombre, registro.email, registro.numero_proyecto) == (
+        "",
+        "",
+        "",
+    )
+
+
+def test_una_columna_del_detalle_corrida_de_lugar_falla(tmp_path):
+    """Este lector toma las columnas por posición: leerlas igual mezclaría datos."""
+    encabezados = {**ENCABEZADOS_CON_DETALLE, "E": "E-mail", "G": "Name"}
+    ruta = _xlsx_de_kimai(
+        tmp_path / "corrido.xlsx",
+        [_fila_con_detalle()],
+        encabezados=encabezados,
+    )
+    with pytest.raises(ErrorLectura) as excepcion:
+        leer(ruta)
+    mensaje = str(excepcion.value)
+    assert "corrido.xlsx" in mensaje
+    assert "no están donde se esperaba" in mensaje
+    assert "'Name'" in mensaje
+
+
+def test_una_hora_de_inicio_ilegible_da_un_error_en_espanol(tmp_path):
+    """Esa hora va en la celda de fecha del entregable: mal leída mueve el día."""
+    ruta = _xlsx_de_kimai(
+        tmp_path / "hora-rota.xlsx",
+        [_fila_con_detalle(desde="las nueve")],
+        encabezados=ENCABEZADOS_CON_DETALLE,
+    )
+    with pytest.raises(ErrorLectura) as excepcion:
+        leer(ruta)
+    mensaje = str(excepcion.value)
+    assert "hora-rota.xlsx" in mensaje
+    assert "fila 2" in mensaje
+    assert "columna B" in mensaje
+    assert "formato de hora" in mensaje
+
+
+def test_los_campos_del_detalle_van_al_final_y_con_valor_por_defecto():
+    """Las construcciones posicionales que ya existían no se rompen."""
+    registro = Registro(date(2026, 8, 3), 1.0, "mzalazar", "CO2510115", "Desarrollo")
+    assert registro.texto_proyecto == ""
+    assert registro.hora_inicio is None
+    assert registro.nombre == ""
+    assert registro.email == ""
+    assert registro.descripcion == ""
+    assert registro.numero_proyecto == ""
+    assert registro.texto_cliente == ""

@@ -1,6 +1,6 @@
 """Tests del lector de timesheet plano en CSV."""
 import csv
-from datetime import date
+from datetime import date, time
 from pathlib import Path
 
 import pytest
@@ -234,3 +234,93 @@ def test_un_proyecto_sin_codigo_dice_donde_esta(tmp_path):
     assert "sin-codigo.csv" in mensaje
     assert "fila 2" in mensaje
     assert "sin código" in mensaje
+
+
+# --- El detalle plano: los datos que el partner pide en cada fila ----------
+
+
+def test_el_primer_registro_del_csv_real_trae_todo_el_detalle():
+    primero = leer(FRANCO)[0]
+    assert primero.fecha == date(2026, 8, 31)
+    assert primero.hora_inicio == time(13, 0)
+    assert primero.nombre == "Franco Dodera"
+    assert primero.username == "franco"
+    assert primero.email == "fanco.dodera@cunix.net"
+    assert primero.descripcion == (
+        "Desarrollo script para parametrizacion, y solucion bug, no se pudo "
+        "probar correctamente falta VPN"
+    )
+    assert primero.numero_proyecto == "PR2510126"
+    assert primero.texto_cliente.startswith("[618010007] ")
+
+
+def test_el_nombre_para_mostrar_y_el_username_son_dos_campos_distintos():
+    registros = leer(FRANCO)
+    assert {r.username for r in registros} == {"franco"}
+    assert {r.nombre for r in registros} == {"Franco Dodera"}
+
+
+def test_todos_los_registros_traen_hora_de_inicio_nombre_y_mail():
+    registros = leer(FRANCO)
+    assert all(r.hora_inicio is not None for r in registros)
+    assert all(r.nombre and r.email for r in registros)
+
+
+def test_un_registro_del_csv_sin_descripcion_queda_vacio_y_no_rompe(tmp_path):
+    """En el archivo de septiembre del partner 112 de 160 filas no la traen."""
+    ruta = tmp_path / "sin-descripcion.csv"
+    ruta.write_text(
+        "Date,From,Duration,Name,User,E-mail,Customer,Project,Activity,"
+        "Description,Project number\n"
+        "2026-08-31,09:30,2:00,Franco Dodera,franco,franco@cunix.net,"
+        "[618010007] MINVU,[PR2510126] x,Desarrollo,,210\n",
+        encoding="utf-8",
+    )
+    registro = leer(ruta)[0]
+    assert registro.descripcion == ""
+    assert registro.hora_inicio == time(9, 30)
+    assert registro.nombre == "Franco Dodera"
+    assert registro.numero_proyecto == "210"
+
+
+def test_un_csv_sin_las_columnas_del_detalle_se_sigue_leyendo(tmp_path):
+    """Los campos nuevos quedan vacíos; las horas, que es lo que factura, no."""
+    ruta = tmp_path / "viejo.csv"
+    ruta.write_text(
+        "Date,Duration,User,Project,Activity\n"
+        "2026-08-31,2:00,franco,[PR2510126] x,Desarrollo\n",
+        encoding="utf-8",
+    )
+    registro = leer(ruta)[0]
+    assert registro.horas == 2.0
+    assert registro.hora_inicio is None
+    assert (registro.nombre, registro.email, registro.numero_proyecto) == (
+        "",
+        "",
+        "",
+    )
+
+
+def test_una_hora_de_inicio_ilegible_da_un_error_en_espanol(tmp_path):
+    """Esa hora va en la celda de fecha del entregable: mal leída mueve el día."""
+    ruta = tmp_path / "hora-rota.csv"
+    ruta.write_text(
+        "Date,From,Duration,User,Project,Activity\n"
+        "2026-08-31,mediodia,2:00,franco,[PR2510126] x,Desarrollo\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ErrorLectura) as excepcion:
+        leer(ruta)
+    mensaje = str(excepcion.value)
+    assert "hora-rota.csv" in mensaje
+    assert "fila 2" in mensaje
+    assert "From" in mensaje
+    assert "formato de hora" in mensaje
+
+
+def test_el_detalle_tambien_se_lee_por_nombre_de_columna(tmp_path):
+    """Con las columnas dadas vuelta, el detalle tiene que salir igual."""
+    revuelto = _reescribir(
+        FRANCO, tmp_path / "revuelto.csv", orden=list(reversed(_columnas_de(FRANCO)))
+    )
+    assert leer(revuelto)[0] == leer(FRANCO)[0]

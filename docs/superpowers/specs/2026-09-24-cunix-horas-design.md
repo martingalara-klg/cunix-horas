@@ -17,17 +17,38 @@ Un proceso repetible: se depositan los exports mensuales de Kimai en una carpeta
 
 **No entra:** integración con la API de Kimai, envío de mails, facturación, tarifas o montos, interfaz gráfica.
 
-## Formato de entrada — los tres exports de Kimai
+## Formato de entrada — los exports de Kimai
 
-Según con qué reporte de Kimai se exporte, sale un archivo distinto. Los tres se leen, siempre un archivo por desarrollador por mes. `lector_kimai.leer()` es un despachador: mira el archivo, elige el lector y devuelve `list[Registro]` en los tres casos, así que agregador, validador y escritor no se enteran del formato.
+Según con qué reporte de Kimai se exporte, sale un archivo distinto, siempre uno por desarrollador por mes. `lector_kimai.leer()` es un despachador: mira el archivo, elige el lector y devuelve `list[Registro]`, así que agregador, validador y escritor no se enteran del formato. Hoy se aceptan los dos exports del reporte de detalle; el resumen mensual se reconoce y se rechaza (más abajo, y el porqué).
 
 | Se reconoce por | Formato | Lector |
 |---|---|---|
 | extensión `.csv` | timesheet plano en CSV | `lector_timesheet_csv.py` |
 | `.xlsx` con `A1='Date'` | timesheet plano en XLSX | `lector_timesheet_xlsx.py` |
-| `.xlsx` con `B1='Total'` | resumen mensual | `lector_resumen_mensual.py` |
+| `.xlsx` con `B1='Total'` | resumen mensual | **rechazado** (ver abajo) |
 
-**Ante cualquier otra cosa se falla**, nunca se adivina: el error nombra el archivo, dice qué encontró en A1 y B1, y enumera los tres formatos que se reconocen. Como todo fallo de lectura, es de *ese* archivo: los demás desarrolladores se procesan igual.
+### El resumen mensual dejó de alcanzar
+
+El partner cambió el entregable: ahora recibe **un solo archivo con el
+detalle plano de todos los desarrolladores**, una fila por registro de
+tiempo, con la hora de inicio, el nombre para mostrar, el mail, la
+descripción y el número de proyecto de cada carga.
+
+El export de resumen mensual no trae nada de eso: es la grilla de días, con
+las horas ya sumadas. Aceptarlo generaría filas incompletas en silencio, que
+es justo el modo de falla que este proyecto evita en todos lados. Por eso
+`lector_kimai.leer()` lo **rechaza con `ErrorLectura`**, y el mensaje le dice
+al dueño qué datos faltan y que tiene que volver a exportar esa persona con
+el reporte de detalle. Como cualquier fallo de lectura, es de *ese* archivo:
+los demás desarrolladores se procesan igual.
+
+`lector_resumen_mensual.py` **no se borró y sigue probado**: el parseo (orden
+de la fecha, separador decimal, clasificación de filas, verificación contra
+los totales declarados) costó trabajo y el partner podría volver al formato
+anterior. Se recupera cambiando una línea en el despachador; sus tests llaman
+al lector interno en vez del punto de entrada.
+
+**Ante cualquier otra cosa se falla**, nunca se adivina: el error nombra el archivo, dice qué encontró en A1 y B1, y enumera los formatos que se reconocen. Como todo fallo de lectura, es de *ese* archivo: los demás desarrolladores se procesan igual.
 
 ### 1. Timesheet plano `.xlsx`
 
@@ -36,14 +57,32 @@ Export plano de registros de tiempo ("timesheet"), un archivo por desarrollador 
 | Col | Campo | Ejemplo | Uso |
 |-----|-------|---------|-----|
 | A | Date | `46265.708333333` | Serial Excel, base 1899-12-30 → día del mes |
+| B | From | `13:00` | Hora de inicio; va en la celda de fecha del entregable |
 | D | Duration | `0.14583333` | Fracción de día; × 24 = horas |
-| E | User | `Matias Zalazar` | Informativo |
+| E | Name | `Matias Zalazar` | Nombre para mostrar |
 | F | User (username) | `mzalazar` | **Clave** de `personas:` en el mapeo |
-| I | Customer | `[608040005] Servicio Nacional de Aduanas` | Informativo |
+| G | E-mail | `matias.zalazar@cunix.net` | Va al entregable |
+| I | Customer | `[608040005] Servicio Nacional de Aduanas` | Texto crudo del cliente |
 | J | Project | `[CO2610170] Aduana-Subastas \| Servicio Nacional de Aduanas - Soporte...` | El código entre corchetes es la **clave** de `proyectos:` |
 | K | Activity | `Desarrollo` | Tercer nivel de la jerarquía de salida |
+| L | Description | `Ticket R-012528` | Lo que hizo; **vacía es válido** |
+| R | Project number | `210` | Va tal cual al entregable |
 
-Columnas ignoradas: B, C (From/To), G, H, L (Description), M (Billable), N, O, P, Q, R, S, T.
+Columnas ignoradas: C (To), H, M (Billable), N, O, P, Q, S, T.
+
+**`Project number` no es el código entre corchetes.** Son dos campos
+distintos de Kimai y los dos hacen falta. El proyecto de Luciano dice
+`[AD2690002]` en el corchete y tiene `Project number` `210` — y en el archivo
+de septiembre del partner ese proyecto figura con `210`. El del corchete es
+la clave del mapeo, que es estable aunque se renombre el proyecto; el número
+va tal cual a la salida. Confundirlos le mandaría al partner un número de
+proyecto que no es el suyo, sin ninguna señal.
+
+Este lector toma las columnas **por posición**, así que las del detalle se
+verifican igual que las otras: si están y no dicen lo que tienen que decir,
+se falla en vez de poner el dato equivocado en cada columna. Si directamente
+no están (un export viejo), los campos nuevos quedan vacíos y las horas se
+leen igual.
 
 **No se aplica ningún filtro:** todo registro presente en el export entra al Excel.
 
@@ -168,11 +207,11 @@ Módulos en `cunix_horas/` (paquete en la raíz del proyecto, no bajo `src/`: as
 
 | Módulo | Responsabilidad | Depende de |
 |--------|-----------------|------------|
-| `lector_kimai.py` | Despachador: detecta el formato del export y delega. | los tres lectores |
+| `lector_kimai.py` | Despachador: detecta el formato del export, delega en los dos lectores de timesheet y rechaza el resumen mensual. | los lectores de timesheet |
 | `kimai_comun.py` | `Registro`, `ErrorLectura` y el parseo XML del `.xlsx`, compartidos. | — |
 | `lector_timesheet_xlsx.py` | Timesheet `.xlsx` → `list[Registro]`. Serial de fecha, duración × 24. | `kimai_comun` |
 | `lector_timesheet_csv.py` | Timesheet `.csv` → `list[Registro]`. Fecha ISO, duración `H:MM`, columnas por nombre. | `kimai_comun` |
-| `lector_resumen_mensual.py` | Resumen mensual `.xlsx` → `list[Registro]`. Verifica contra el total declarado. | `kimai_comun` |
+| `lector_resumen_mensual.py` | Resumen mensual `.xlsx` → `list[Registro]`. Verifica contra el total declarado. **Ya no se usa desde `leer()`**: se conserva probado por si el partner vuelve a ese formato. | `kimai_comun` |
 | `mapeo.py` | Carga y valida el YAML. Resuelve código → (cliente, proyecto). Resuelve username *o* nombre para mostrar → (nombre, archivo). | — |
 | `agregador.py` | `list[Registro]` + mapeo → `Reporte` con jerarquía y totales. Colapsa las actividades de cada proyecto en una sola fila. | `mapeo` |
 | `validador.py` | `Reporte` + registros → `list[Aviso]`. | — |
@@ -189,6 +228,15 @@ class Registro:
     username: str         # col F
     cod_proyecto: str     # extraído de col J
     actividad: str        # col K
+    # --- lo que pide el detalle plano; al final y con valor por defecto,
+    #     para no romper las construcciones posicionales que ya existen ---
+    texto_proyecto: str = ""       # col J tal cual
+    hora_inicio: time | None = None  # col B (From); None si Kimai no la trae
+    nombre: str = ""               # col E (Name), distinto del username
+    email: str = ""                # col G
+    descripcion: str = ""          # col L; vacía es válido
+    numero_proyecto: str = ""      # col R; NO es el código entre corchetes
+    texto_cliente: str = ""        # col I tal cual
 
 @dataclass(frozen=True)
 class Reporte:
@@ -222,6 +270,8 @@ Todas las estructuras son inmutables; cada etapa devuelve un valor nuevo.
 - Resumen mensual cuyo total declarado no cierra con lo parseado.
 - Resumen mensual con encabezados de día ambiguos (no se puede decidir día/mes vs mes/día).
 - Archivo de input ilegible, de formato desconocido, o sin la estructura de columnas esperada.
+- Export de resumen mensual: el formato se reconoce pero no trae los datos que el partner pide por fila.
+- Hora de inicio (`From`) que no tiene formato de hora: va en la celda de fecha del entregable, y mal leída movería el registro de día.
 
 El fallo de un archivo **no impide** procesar los demás: cada input es independiente. Al final se reporta qué se generó y qué no.
 
