@@ -548,7 +548,7 @@ PRINCIPALES_TRABAJOS = [
 
 EXPLICACIONES = {
     "alertas": (
-        "Explicación de KLG: las alertas se originan en que 91,0 de las 150,0 h "
+        "las alertas se originan en que 91,0 de las 150,0 h "
         "atribuidas a Alexis Carnero eran en realidad de Gabriel Denis, que "
         "trabajó sin usuario de Kimai. Separadas en este anexo, Alexis Carnero "
         "queda con 59,0 h en 17 días (promedio 3,5 h por día) y Gabriel Denis "
