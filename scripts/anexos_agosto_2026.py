@@ -84,6 +84,15 @@ MARCA_PENDIENTE = "[●]"
 # ESTADO_AL_CIERRE se pone igual en las 21 filas de la tabla 3 a pedido suyo;
 # dijo que despues corrige a mano las que no correspondan.
 ESTADO_AL_CIERRE = "Terminado"
+
+# Estados distintos del general, al cierre del periodo (31/08/2026), segun lo
+# que informaron los desarrolladores el 2026-09-30. La clave es un fragmento
+# distintivo de la descripcion del trabajo, para no depender del numero de fila.
+ESTADOS_POR_TRABAJO = {
+    # Franco Dodera: el ETL y el Power BI estaban hechos, pero C.UNIX nunca
+    # subio el BI a dev para verlo y dar el OK.
+    "ETL y Power BI de DW_MINVU": "En revisión de C.UNIX",
+}
 # Plazo de entrega que KLG se compromete a cumplir, en la tabla de condiciones.
 DIAS_HABILES_ENTREGA = "5"
 
@@ -627,6 +636,14 @@ def _escribir_celda(celda, texto):
         run._element.getparent().remove(run._element)
 
 
+def _estado_de(descripcion):
+    """Estado al cierre: el especifico del trabajo si lo hay, si no el general."""
+    for fragmento, estado in ESTADOS_POR_TRABAJO.items():
+        if fragmento in descripcion:
+            return estado
+    return ESTADO_AL_CIERRE
+
+
 def _escribir_parrafo(parrafo, texto):
     """Reemplaza el texto de un parrafo conservando el formato del primer run."""
     if not parrafo.runs:
@@ -691,7 +708,7 @@ def escribir_informe(filas, explicaciones):
         _escribir_celda(fila.cells[0], entrada["proyecto"])
         _escribir_celda(fila.cells[1], entrada["ticket"])
         _escribir_celda(fila.cells[2], entrada["trabajo"])
-        _escribir_celda(fila.cells[3], ESTADO_AL_CIERRE)
+        _escribir_celda(fila.cells[3], _estado_de(entrada["trabajo"]))
         _escribir_celda(fila.cells[4], _formato(entrada["horas"]))
 
     # Estado al cierre en TODAS las filas de la tabla 3, no solo en las nuevas:
@@ -700,7 +717,7 @@ def escribir_informe(filas, explicaciones):
         if fila.cells[0].text.strip().lower().startswith("total"):
             continue
         if MARCA_PENDIENTE in fila.cells[3].text:
-            _escribir_celda(fila.cells[3], ESTADO_AL_CIERRE)
+            _escribir_celda(fila.cells[3], _estado_de(fila.cells[2].text))
 
     # Tabla 0, condiciones: se completa el plazo de entrega que dejo C.UNIX.
     celda_cond = documento.tables[0].rows[0].cells[0]
