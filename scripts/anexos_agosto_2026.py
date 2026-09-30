@@ -75,6 +75,14 @@ HORAS_ESPERADAS_ALEXIS = 59.0
 
 MARCA_PENDIENTE = "[●]"
 
+# Decisiones del dueño (2026-09-30).
+# ESTADO_AL_CIERRE se pone igual en las 21 filas de la tabla 3 a pedido suyo;
+# dijo que despues corrige a mano las que no correspondan.
+ESTADO_AL_CIERRE = "Terminado"
+# Plazo de entrega que KLG se compromete a cumplir, en la tabla de condiciones.
+DIAS_HABILES_ENTREGA = "5"
+
+
 ENCABEZADO_NOTA = "Nota KLG"
 NOTA_DIA_COMPARTIDO = (
     "Horario reconstruido por KLG: Kimai registro un unico bloque diario en la "
@@ -456,6 +464,15 @@ def _escribir_celda(celda, texto):
         run._element.getparent().remove(run._element)
 
 
+def _escribir_parrafo(parrafo, texto):
+    """Reemplaza el texto de un parrafo conservando el formato del primer run."""
+    if not parrafo.runs:
+        parrafo.add_run("")
+    parrafo.runs[0].text = texto
+    for run in parrafo.runs[1:]:
+        run._element.getparent().remove(run._element)
+
+
 def _clonar_fila(tabla, indice_modelo, indice_destino):
     """Inserta una copia de una fila existente y devuelve la fila nueva."""
     nueva = copy.deepcopy(tabla.rows[indice_modelo]._tr)
@@ -511,8 +528,25 @@ def escribir_informe(filas, explicaciones):
         _escribir_celda(fila.cells[0], entrada["proyecto"])
         _escribir_celda(fila.cells[1], entrada["ticket"])
         _escribir_celda(fila.cells[2], entrada["trabajo"])
-        _escribir_celda(fila.cells[3], estado_original)
+        _escribir_celda(fila.cells[3], ESTADO_AL_CIERRE)
         _escribir_celda(fila.cells[4], _formato(entrada["horas"]))
+
+    # Estado al cierre en TODAS las filas de la tabla 3, no solo en las nuevas:
+    # las que venian de C.UNIX tambien traen la marca pendiente.
+    for fila in tabla3.rows[1:]:
+        if fila.cells[0].text.strip().lower().startswith("total"):
+            continue
+        if MARCA_PENDIENTE in fila.cells[3].text:
+            _escribir_celda(fila.cells[3], ESTADO_AL_CIERRE)
+
+    # Tabla 0, condiciones: se completa el plazo de entrega que dejo C.UNIX.
+    celda_cond = documento.tables[0].rows[0].cells[0]
+    if MARCA_PENDIENTE not in celda_cond.text:
+        raise SystemExit("ABORTADO: la tabla de condiciones ya no tiene marca.")
+    for parrafo in celda_cond.paragraphs:
+        if MARCA_PENDIENTE in parrafo.text:
+            _escribir_parrafo(parrafo, parrafo.text.replace(
+                MARCA_PENDIENTE, DIAS_HABILES_ENTREGA))
 
     # Tabla 4, observaciones: se completan los tres pendientes que dejo C.UNIX.
     tabla4 = documento.tables[4]
