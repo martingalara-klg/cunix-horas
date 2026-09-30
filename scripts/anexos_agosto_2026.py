@@ -14,7 +14,12 @@ QUE HACE
     Gabriel salen de ``horas_agosto_2026 (2).xlsx`` (hoja ``Agosto 2026``).
     Ademas se completan los pendientes que C.UNIX dejo marcados para que los
     llene KLG (perfiles, usuarios de Kimai, principales trabajos y
-    observaciones).
+    observaciones), y se cargan las descripciones de Alexis Carnero, que
+    Kimai nunca registro: salen de ``Horas_Agosto_2026_Alexis_Carnero.xlsx``
+    (hoja ``Agosto 2026``), la planilla que el entrego despues del reclamo de
+    C.UNIX. Esa planilla solo aporta descripciones: dia, inicio, fin y horas
+    se verifican contra el anexo ya separado y, si algo no coincide, el script
+    aborta sin escribir.
 
 POR QUE ACA Y NO EN LA HERRAMIENTA
     ``cunix_horas/`` genera los entregables a partir de la exportacion de Kimai.
@@ -94,12 +99,22 @@ NOTA_DIA_ENTERO = (
     "Dia completo de Gabriel Denis, que no tiene usuario de Kimai. Se conserva "
     "el horario del bloque original registrado en la cuenta de Alexis Carnero."
 )
+# Reemplaza a NOTA_DIA_COMPARTIDO en las filas de Alexis Carnero: el origen del
+# horario sigue siendo el mismo, pero ahora hay un dato nuevo que lo respalda.
+NOTA_ALEXIS_CONFIRMADA = (
+    "Horario reconstruido por KLG al separar las horas de Gabriel Denis del "
+    "unico bloque diario que Kimai registro en la cuenta de Alexis Carnero. "
+    "Alexis Carnero entrego despues su propio detalle de agosto y coincide con "
+    "esa reconstruccion: mismo dia, mismo inicio, mismo fin y las mismas horas. "
+    "De ahi sale la descripcion de esta fila."
+)
 
 RAIZ = Path(__file__).resolve().parent.parent
 SALIDA = RAIZ / "output" / "2026-08"
 ORIGEN_XLSX = RAIZ / "Anexo-II-A-Detalle-horas-KLG-2026-08.xlsx"
 ORIGEN_DOCX = RAIZ / "Anexo-II-Informe-mensual-horas-KLG-2026-08 (1).docx"
 ORIGEN_GABRIEL = RAIZ / "horas_agosto_2026 (2).xlsx"
+ORIGEN_ALEXIS = RAIZ / "Horas_Agosto_2026_Alexis_Carnero.xlsx"
 
 PRIMERA_FILA = 2
 ULTIMA_FILA_RANGO = 601
@@ -134,6 +149,50 @@ def leer_horas_de_gabriel():
         if dia in registros:
             raise SystemExit(f"ABORTADO: dia {dia} repetido en la planilla de Gabriel.")
         registros[dia] = (float(horas), str(descripcion).strip())
+    return registros
+
+
+def _a_time(valor, donde):
+    """Convierte a datetime.time lo que venga en una celda de horario."""
+    if isinstance(valor, dt.time):
+        return valor
+    if isinstance(valor, dt.datetime):
+        return valor.time()
+    texto = str(valor or "").strip()
+    coincidencia = re.fullmatch(r"(\d{1,2}):(\d{2})(?::\d{2})?", texto)
+    if not coincidencia:
+        raise SystemExit(f"ABORTADO: no se pudo leer la hora «{valor}» en {donde}.")
+    return dt.time(int(coincidencia.group(1)), int(coincidencia.group(2)))
+
+
+def leer_detalle_de_alexis():
+    """Devuelve {dia del mes: (inicio, fin, horas, descripcion)} de su planilla.
+
+    Alexis Carnero entrego su propio detalle de agosto 2026 con las mismas
+    columnas que la hoja Detalle del anexo. Solo las filas 2 a 18 son
+    registros: la 19 es el total. Lo unico que este archivo aporta al anexo es
+    la descripcion; el resto se usa para verificar que coincide.
+    """
+    hoja = openpyxl.load_workbook(ORIGEN_ALEXIS, data_only=True)["Agosto 2026"]
+    registros = {}
+    for fila in range(2, 19):
+        fecha, inicio, fin = (hoja.cell(fila, c).value for c in (1, 2, 3))
+        descripcion = hoja.cell(fila, 6).value
+        horas = hoja.cell(fila, 7).value
+        if not fecha or not inicio or not fin or not descripcion or not horas:
+            raise SystemExit(f"ABORTADO: fila {fila} de la planilla de Alexis incompleta.")
+        coincidencia = re.match(r"\s*(\d{1,2})[/-]", str(fecha))
+        dia = int(coincidencia.group(1)) if coincidencia else getattr(fecha, "day", None)
+        if not dia:
+            raise SystemExit(f"ABORTADO: no se pudo leer el dia de «{fecha}».")
+        if dia in registros:
+            raise SystemExit(f"ABORTADO: dia {dia} repetido en la planilla de Alexis.")
+        registros[dia] = (
+            _a_time(inicio, f"fila {fila} de la planilla de Alexis"),
+            _a_time(fin, f"fila {fila} de la planilla de Alexis"),
+            float(horas),
+            str(descripcion).strip(),
+        )
     return registros
 
 
@@ -245,6 +304,53 @@ def repartir(filas, gabriel):
     return resultado
 
 
+def verificar_detalle_de_alexis(filas, alexis):
+    """Aborta si la planilla de Alexis no coincide con el anexo ya separado.
+
+    Se compara dia, inicio, fin y horas de cada uno de sus registros. Si algo
+    difiere, no se escribe nada: la planilla solo puede aportar descripciones.
+    """
+    filas_alexis = {f["fecha"].day: f for f in filas if f["persona"] == ALEXIS}
+
+    problemas = []
+    sobrantes = sorted(set(alexis) - set(filas_alexis))
+    faltantes = sorted(set(filas_alexis) - set(alexis))
+    for dia in sobrantes:
+        problemas.append(f"La planilla de Alexis tiene el dia {dia} y el anexo no.")
+    for dia in faltantes:
+        problemas.append(f"El anexo tiene el dia {dia} de Alexis y la planilla no.")
+    for dia in sorted(set(alexis) & set(filas_alexis)):
+        inicio, fin, horas, _ = alexis[dia]
+        fila = filas_alexis[dia]
+        if inicio != fila["inicio"]:
+            problemas.append(f"Dia {dia}: inicio {inicio} en la planilla y {fila['inicio']} en el anexo.")
+        if fin != fila["fin"]:
+            problemas.append(f"Dia {dia}: fin {fin} en la planilla y {fila['fin']} en el anexo.")
+        if round(horas - fila["horas"], 6) != 0:
+            problemas.append(f"Dia {dia}: {horas} h en la planilla y {fila['horas']} h en el anexo.")
+
+    total = sum(horas for _, _, horas, _ in alexis.values())
+    if round(total, 6) != HORAS_ESPERADAS_ALEXIS:
+        problemas.append(f"La planilla de Alexis suma {total} h y no {HORAS_ESPERADAS_ALEXIS}.")
+
+    if problemas:
+        raise SystemExit(
+            "ABORTADO, la planilla de Alexis no coincide con el anexo:\n  "
+            + "\n  ".join(problemas)
+        )
+
+
+def aplicar_detalle_de_alexis(filas, alexis):
+    """Carga la descripcion de Alexis en sus filas y actualiza su Nota KLG."""
+    for f in filas:
+        if f["persona"] != ALEXIS:
+            continue
+        f["descripcion"] = alexis[f["fecha"].day][3]
+        if f["nota"] == NOTA_DIA_COMPARTIDO:
+            f["nota"] = NOTA_ALEXIS_CONFIRMADA
+    return filas
+
+
 # --- Escritura del Excel ----------------------------------------------------
 
 
@@ -327,10 +433,10 @@ def restaurar_validaciones_x14(origen, destino):
 
 # --- Contenido redactado para el informe ------------------------------------
 
-# Agrupacion de las 91 h de Gabriel (a partir de las descripciones reales de su
-# planilla) mas la linea de las 59 h de Alexis, que siguen sin descripcion en
-# Kimai. Reemplazan a la unica fila que decia "Alexis Carnero: sin descripcion
-# en Kimai ... 150,0". Suman 150,0, asi que el total de la tabla sigue en 306,0.
+# Agrupacion de las 91 h de Gabriel (4 lineas) y de las 59 h de Alexis (5
+# lineas), a partir de las descripciones reales de sus planillas. Reemplazan a
+# la unica fila que decia "Alexis Carnero: sin descripcion en Kimai ... 150,0".
+# Suman 150,0, asi que el total de la tabla sigue en 306,0.
 PRINCIPALES_TRABAJOS = [
     {
         "proyecto": "MinVu",
@@ -378,10 +484,65 @@ PRINCIPALES_TRABAJOS = [
         "proyecto": "MinVu",
         "ticket": "Sin ticket",
         "trabajo": (
-            "Alexis Carnero: sin descripción en Kimai. KLG debe detallar el "
-            "trabajo realizado."
+            "Registros Técnicos (RRTT), Alexis Carnero: cierre del Hito 2, con "
+            "el diagnóstico y la corrección del bug del Certificado de "
+            "Inscripción Vigente (datos faltantes del inscrito y domicilio de "
+            "casa matriz), la entrega de los componentes ASP y los scripts SQL "
+            "del Req17, el despliegue de la API en desarrollo y el inventario "
+            "de componentes para el traspaso a Producción"
         ),
-        "horas": 59.0,
+        "horas": 26.5,
+    },
+    {
+        "proyecto": "MinVu",
+        "ticket": "BUG-107 · BUG-109 · BUG-110 · BUG-115",
+        "trabajo": (
+            "Registros Técnicos (RRTT), Alexis Carnero: corrección de los bugs "
+            "de los informes, incluidos el BUG-107 (tipo de artículo 6 mal "
+            "clasificado por el criterio D.S. 135 invertido), el BUG-109 y el "
+            "BUG-110 de la entrega v31 y el BUG-115 (desborde de Integer en el "
+            "DLL VB6 al modificar informes, reemplazado por el SP "
+            "USP_UPD_INFORME_JURIDICO), más la atención del incidente del "
+            "Informe Jurídico con rol SEREMI"
+        ),
+        "horas": 5.0,
+    },
+    {
+        "proyecto": "MinVu",
+        "ticket": "Sin ticket",
+        "trabajo": (
+            "Registros Técnicos (RRTT), Alexis Carnero: incidentes de "
+            "producción del Sprint 11, con los scripts de parametrización por "
+            "decreto que dependían del Req14, el fix de mayúsculas en "
+            "«Profesional Habilitante» del Certificado de Vigencia, la "
+            "corrección del «ERROR EN RT», el filtro de antecedentes por "
+            "decreto y el fix de atr_modifica_socio.asp"
+        ),
+        "horas": 12.0,
+    },
+    {
+        "proyecto": "MinVu",
+        "ticket": "Sin ticket",
+        "trabajo": (
+            "Registros Técnicos (RRTT), Alexis Carnero: integración PPTT-RRTT, "
+            "con la corrección del error de ingreso de solicitudes de "
+            "Contratistas y Consultores (el repositorio Azure de la API estaba "
+            "desactualizado respecto del binario en servicio), su verificación "
+            "en Test y la entrega del listado de componentes y scripts del "
+            "Hito 3 / Sprint 11"
+        ),
+        "horas": 8.5,
+    },
+    {
+        "proyecto": "MinVu",
+        "ticket": "Sin ticket",
+        "trabajo": (
+            "Registros Técnicos (RRTT), Alexis Carnero: toma de razón del "
+            "decreto que modifica el Registro Nacional y selector Antiguo/"
+            "Actual D.S. N°135 de los buscadores de inscritos; API "
+            "SyncDocumental (GesDoc) y revisión del informe de QA"
+        ),
+        "horas": 7.0,
     },
 ]
 
@@ -401,9 +562,11 @@ EXPLICACIONES = {
         "ticket»: en agosto los trabajos de SELICO, VictoriusCP2 y Victorius 3 "
         "no se venían gestionando con tickets de iTop; desde septiembre toda "
         "carga en Kimai empieza con el ticket de iTop o la tarea de ClickUp. "
-        "Las 59,0 h de Alexis Carnero siguen sin descripción en Kimai: KLG las "
-        "está reconstruyendo con él y las enviará como corrección de este "
-        "anexo. Aclaración sobre los horarios: el inicio y el fin de los días "
+        "Alexis Carnero entregó su detalle diario de agosto: está incorporado "
+        "al Anexo II-A, donde sus 59,0 h quedan descritas registro por "
+        "registro, y coincide con la separación de horas de este anexo, los "
+        "mismos 17 días con el mismo inicio, el mismo fin y las mismas horas. "
+        "Aclaración sobre los horarios: el inicio y el fin de los días "
         "compartidos entre Alexis Carnero y Gabriel Denis son una "
         "reconstrucción de KLG, no un registro de Kimai. Kimai guardó un único "
         "bloque continuo por día a nombre de Alexis, y KLG lo partió por "
@@ -588,6 +751,12 @@ def verificar(destino_xlsx, destino_docx):
             f"  {persona:<18} {d['horas']:>6.1f} h   {d['filas']:>2} filas   "
             f"{len(d['dias']):>2} dias   prom {d['horas'] / len(d['dias']):.1f}"
         )
+    sin_descripcion = [
+        f"{f['fecha']:%d/%m} {f['persona']}"
+        for f in filas
+        if not str(f["descripcion"] or "").strip()
+    ]
+    print(f"  filas sin descripcion: {sin_descripcion}")
     dias_alexis = sorted({f["fecha"].day for f in filas if f["persona"] == ALEXIS})
     print(f"  dias de Alexis: {dias_alexis}")
     print(f"  Alexis tiene filas el 2 o el 20: {bool({2, 20} & set(dias_alexis))}")
@@ -659,11 +828,16 @@ def verificar(destino_xlsx, destino_docx):
 
 def main():
     gabriel = leer_horas_de_gabriel()
+    alexis = leer_detalle_de_alexis()
     libro = openpyxl.load_workbook(ORIGEN_XLSX)
     filas_originales = leer_detalle(libro["Detalle"])
     verificar_aritmetica(filas_originales, gabriel)
 
     filas = repartir(filas_originales, gabriel)
+    # Antes de escribir nada: la planilla de Alexis tiene que coincidir con el
+    # reparto dia por dia. Si no coincide, el script aborta.
+    verificar_detalle_de_alexis(filas, alexis)
+    aplicar_detalle_de_alexis(filas, alexis)
     destino_xlsx = escribir_excel(filas)
     destino_docx = escribir_informe(filas, EXPLICACIONES)
     print(f"Escrito: {destino_xlsx}")
