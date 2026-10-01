@@ -53,13 +53,25 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import re
-import shutil
-import zipfile
-from decimal import Decimal, ROUND_HALF_UP
+import sys
 from pathlib import Path
 
 import openpyxl
 from docx import Document
+
+# El script se corre como `python scripts/anexos_agosto_2026.py`, asi que la
+# raiz del repo no esta en sys.path por si sola.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from cunix_horas.anexos import formato_horas  # noqa: E402
+from cunix_horas.escritor_anexo_detalle import (  # noqa: E402
+    _restaurar_validaciones_x14 as restaurar_validaciones_x14,
+)
+from cunix_horas.escritor_anexo_informe import (  # noqa: E402
+    _clonar_fila,
+    _escribir_celda,
+    _escribir_parrafo,
+)
 
 # --- Constantes que el dueño puede querer cambiar ---------------------------
 
@@ -427,36 +439,6 @@ def escribir_excel(filas):
     return destino
 
 
-def restaurar_validaciones_x14(origen, destino):
-    """Reinyecta el bloque extLst que openpyxl descarta al guardar.
-
-    Son las listas desplegables de Persona y Proyecto de la hoja Detalle, que
-    apuntan a la hoja Datos. openpyxl no soporta esa extension y la elimina.
-    """
-    with zipfile.ZipFile(origen) as z:
-        original = z.read("xl/worksheets/sheet4.xml").decode("utf-8")
-    coincidencia = re.search(r"<extLst>.*?</extLst>", original, re.S)
-    if not coincidencia:
-        return
-    # xr:uid solo tiene sentido con el namespace xr, que openpyxl no declara en
-    # la raiz de la hoja que genera. Sin quitarlo, el archivo no abre.
-    bloque = re.sub(r'\s+xr:uid="[^"]*"', "", coincidencia.group(0))
-
-    temporal = destino.with_suffix(".tmp.xlsx")
-    with zipfile.ZipFile(destino) as entrada, zipfile.ZipFile(
-        temporal, "w", zipfile.ZIP_DEFLATED
-    ) as salida:
-        for elemento in entrada.infolist():
-            contenido = entrada.read(elemento.filename)
-            if elemento.filename == "xl/worksheets/sheet4.xml":
-                texto = contenido.decode("utf-8")
-                if "<extLst>" not in texto:
-                    texto = texto.replace("</worksheet>", bloque + "</worksheet>")
-                contenido = texto.encode("utf-8")
-            salida.writestr(elemento, contenido)
-    shutil.move(str(temporal), str(destino))
-
-
 # --- Contenido redactado para el informe ------------------------------------
 
 # Agrupacion de las 91 h de Gabriel (4 lineas) y de las 59 h de Alexis (5
@@ -631,50 +613,12 @@ EXPLICACIONES = {
 # --- Escritura del informe --------------------------------------------------
 
 
-def _formato(numero):
-    """Un decimal con coma, redondeando medio hacia arriba como el original.
-
-    Con el redondeo por defecto de Python, 2,25 daria 2,2 y cambiaria el
-    promedio de Lautaro Zalazar, que esta fila no deberia tocar.
-    """
-    redondeado = Decimal(str(numero)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
-    return f"{redondeado}".replace(".", ",")
-
-
-def _escribir_celda(celda, texto):
-    """Reemplaza el texto de una celda conservando el formato del primer run."""
-    parrafo = celda.paragraphs[0]
-    for extra in celda.paragraphs[1:]:
-        extra._element.getparent().remove(extra._element)
-    if not parrafo.runs:
-        parrafo.add_run("")
-    parrafo.runs[0].text = texto
-    for run in parrafo.runs[1:]:
-        run._element.getparent().remove(run._element)
-
-
 def _estado_de(descripcion):
     """Estado al cierre: el especifico del trabajo si lo hay, si no el general."""
     for fragmento, estado in ESTADOS_POR_TRABAJO.items():
         if fragmento in descripcion:
             return estado
     return ESTADO_AL_CIERRE
-
-
-def _escribir_parrafo(parrafo, texto):
-    """Reemplaza el texto de un parrafo conservando el formato del primer run."""
-    if not parrafo.runs:
-        parrafo.add_run("")
-    parrafo.runs[0].text = texto
-    for run in parrafo.runs[1:]:
-        run._element.getparent().remove(run._element)
-
-
-def _clonar_fila(tabla, indice_modelo, indice_destino):
-    """Inserta una copia de una fila existente y devuelve la fila nueva."""
-    nueva = copy.deepcopy(tabla.rows[indice_modelo]._tr)
-    tabla.rows[indice_destino - 1]._tr.addnext(nueva)
-    return tabla.rows[indice_destino]
 
 
 def escribir_informe(filas, explicaciones):
@@ -709,9 +653,9 @@ def escribir_informe(filas, explicaciones):
         datos = resumen[nombres_informe[etiqueta]]
         promedio = datos["horas"] / len(datos["dias"])
         _escribir_celda(tabla2.rows[indice].cells[1], PERFIL)
-        _escribir_celda(tabla2.rows[indice].cells[2], _formato(datos["horas"]))
+        _escribir_celda(tabla2.rows[indice].cells[2], formato_horas(datos["horas"]))
         _escribir_celda(tabla2.rows[indice].cells[3], str(len(datos["dias"])))
-        _escribir_celda(tabla2.rows[indice].cells[4], _formato(promedio))
+        _escribir_celda(tabla2.rows[indice].cells[4], formato_horas(promedio))
 
     # Tabla 3, principales trabajos: la primera fila (Alexis, 150,0 h sin
     # descripcion) se reemplaza por el trabajo real de Gabriel agrupado mas una
@@ -726,7 +670,7 @@ def escribir_informe(filas, explicaciones):
         _escribir_celda(fila.cells[1], entrada["ticket"])
         _escribir_celda(fila.cells[2], entrada["trabajo"])
         _escribir_celda(fila.cells[3], _estado_de(entrada["trabajo"]))
-        _escribir_celda(fila.cells[4], _formato(entrada["horas"]))
+        _escribir_celda(fila.cells[4], formato_horas(entrada["horas"]))
 
     # Estado al cierre en TODAS las filas de la tabla 3, no solo en las nuevas:
     # las que venian de C.UNIX tambien traen la marca pendiente.

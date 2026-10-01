@@ -59,7 +59,7 @@ if not defined PYTHON_EXE (
 )
 
 if "%~1"=="" (
-    set /p MES="Mes a generar (AAAA-MM, ej 2025-10): "
+    set /p MES="Mes a generar (AAAA-MM, ej 2026-09): "
 ) else (
     set MES=%~1
 )

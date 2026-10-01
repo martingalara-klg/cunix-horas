@@ -7,7 +7,6 @@ def test_el_paquete_es_importable():
 
 def test_los_fixtures_existen():
     assert (FIXTURES / "kimai-mzalazar.xlsx").is_file()
-    assert (FIXTURES / "plantilla.xlsx").is_file()
 
 
 def test_las_plantillas_de_los_anexos_existen():

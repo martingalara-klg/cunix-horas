@@ -14,7 +14,7 @@ import pytest
 import yaml
 
 from cunix_horas.completado import completar_desde_mapeo
-from cunix_horas.detalle import construir
+from cunix_horas.filas_anexo import construir
 from cunix_horas.kimai_comun import (
     ORIGEN_DETALLE,
     ORIGEN_RESUMEN_MENSUAL,
@@ -90,27 +90,26 @@ def test_no_muta_el_registro_que_recibe():
     assert original.numero_proyecto == ""
 
 
-def test_la_fila_sale_con_la_descripcion_vacia_y_la_fecha_sin_hora():
-    """Las dos columnas que el partner acepta vacías."""
+def test_la_fila_del_anexo_sale_sin_descripcion_y_sin_horario():
+    """Las tres columnas que el resumen mensual no trae y la plantilla acepta."""
     registros = completar_desde_mapeo([del_resumen()], mapeo(), ARCHIVO)
     fila = construir(registros, mapeo()).filas[0]
 
     assert fila.descripcion == ""
-    assert fila.valores[8] is None  # la celda va vacía, no con un texto vacío
-    assert fila.fecha_hora.date() == date(2026, 8, 3)
-    assert fila.fecha_hora.time() == time(0, 0)
+    assert fila.inicio is None and fila.fin is None
+    assert fila.fecha == date(2026, 8, 3)
 
 
-def test_la_fila_sale_con_las_diez_columnas_llenas_salvo_la_descripcion():
+def test_la_fila_del_anexo_sale_con_la_persona_y_el_proyecto_resueltos():
     registros = completar_desde_mapeo([del_resumen()], mapeo(), ARCHIVO)
     fila = construir(registros, mapeo()).filas[0]
 
-    assert fila.nombre == "Lautaro Zalazar"
-    assert fila.username == "lzalazar"
-    assert fila.email == "lautaro.zalazar@cunix.net"
-    assert fila.cliente == "Sistemas - C.UNIX"
+    assert fila.persona == "Lautaro Zalazar"
     assert fila.proyecto == "Victorius 3"
-    assert fila.numero_proyecto == "GI-123"
+    # El usuario y el mail los completó el mapeo sobre el registro: van a la
+    # hoja Datos, no a la fila del Detalle.
+    assert registros[0].username == "lzalazar"
+    assert registros[0].email == "lautaro.zalazar@cunix.net"
 
 
 # --- Lo que el mapeo no tiene frena ese archivo -----------------------------

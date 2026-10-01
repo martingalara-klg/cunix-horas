@@ -1,316 +1,285 @@
 # cunix-horas
 
 Convierte los exports de Kimai en **lo que KLG le entrega a C.UNIX todos los
-meses**.
+meses**: los dos anexos, listos para revisar y enviar.
 
-## El entregable de hoy: los dos anexos
-
-C.UNIX recibe **dos documentos por mes**, con el formato que mandó él mismo:
+```
+input/AAAA-MM/*.xlsx|*.csv        exports de Kimai, uno por desarrollador
+input/AAAA-MM/manual/*.xlsx       horas de quien no está en Kimai, y
+                                  descripciones que alguien entrega aparte
+        |
+        v
+python -m cunix_horas AAAA-MM
+        |
+        v
+output/AAAA-MM/  Anexo II (.docx) + Anexo II-A (.xlsx) + _validacion.txt
+```
 
 - **Anexo II** — el informe mensual en Word: horas e importe por proyecto,
   horas por persona, principales trabajos y observaciones.
 - **Anexo II-A** — el detalle en Excel: una fila por registro de tiempo, con
   las columnas de control y revisión que C.UNIX completa después.
 
-Las plantillas vacías de los dos viven en `templates/`:
+Los dos salen de las plantillas vacías que mandó C.UNIX, que viven en
+`templates/` y **nunca se modifican**: se trabaja sobre copias.
+
+---
+
+## Qué hacer cada mes
+
+Esto es todo. Si vas a leer una sola sección, es ésta.
+
+### 1. Exportar de Kimai, un archivo por persona
+
+En Kimai: **Horas → filtrar el mes completo y una sola persona → Exportar a
+Excel**, y repetir con cada desarrollador.
+
+Conviene el **reporte de detalle**: trae la hora de inicio y la descripción de
+cada registro. El **resumen mensual** también sirve, pero sus filas salen sin
+descripción y sin horario, y el informe de validación te lo avisa.
+
+Exportar de a una persona no es un capricho: si un archivo falla, así sabés
+cuál es.
+
+### 2. Dejar los archivos en la carpeta del mes
 
 ```
-templates/Anexo-II-Informe-mensual-horas-KLG.docx
-templates/Anexo-II-A-Detalle-horas-KLG.xlsx
+input/2026-09/
 ```
 
-**Todavía no las usa el CLI.** Agosto de 2026, el primer mes entregado con
-este formato, salió de `scripts/anexos_agosto_2026.py`, un script atado a ese
-mes. Promover ese script a parte de la herramienta es el trabajo que queda
-pendiente; abajo, «Lo que falta».
+El nombre de cada archivo da igual. La carpeta se crea a mano si no existe.
 
-Lo que el CLI genera hoy sigue siendo el consolidado plano del formato
-anterior (`Horas KLG-<Mes><Año>.xlsx`), que es lo que describe el resto de
-este README.
+Si alguien del equipo **no tiene usuario de Kimai**, o **entregó sus
+descripciones en una planilla aparte**, esos archivos van en
+`input/2026-09/manual/` y además tienen que estar declarados en
+`config/mapeo.yaml` (ver «Las planillas que no salen de Kimai», más abajo).
 
-## Uso mensual
+### 3. Correr la herramienta
 
-1. En Kimai, exportar las horas del mes, **un archivo por desarrollador**.
-   Conviene el **reporte de detalle**, que trae las diez columnas; el de
-   resumen mensual también sirve, con lo que se pierde (ver abajo).
-2. Crear la carpeta del mes y poner los archivos adentro:
-   `input/2025-10/`  (el nombre de cada archivo da igual)
-3. Doble clic en `generar.bat`, o desde una terminal:
-   ```
-   python -m cunix_horas 2025-10
-   ```
-4. El archivo del mes queda en `output/2025-10/`, con el nombre
-   `Horas KLG-Oct2025.xlsx`.
-5. Leer `output/2025-10/_validacion.txt` **antes de mandar nada**: ahí está,
-   arriba de todo, la lista de los desarrolladores que entraron al archivo y
-   la de los que no, con el motivo de cada uno.
-
-## Qué recibe el partner
-
-**Un solo archivo por mes, con todos los desarrolladores juntos, una fila por
-cada carga de horas.** Diez columnas, en este orden:
+Doble clic en **`generar.bat`** y escribir el mes cuando lo pida, o desde una
+terminal:
 
 ```
-Date | Duration | Name | User | E-mail | Customer | Project | Activity | Description | Project number
+python -m cunix_horas 2026-09
 ```
 
-- `Date` es la fecha del registro; adentro guarda también la hora de inicio,
-  aunque la celda muestre sólo la fecha.
-- `Duration` es una **duración** (`4:00`), no un número de horas (`4`). Así,
-  cuando el partner suma la columna, le da `160:30` y no `160,5`.
-- `Description` puede venir vacía y está bien: en el archivo de referencia que
-  mandó el partner, 112 de las 160 filas lo están.
-- `Project number` es un campo propio de Kimai (`210`) y **no** el código entre
-  corchetes del proyecto (`[AD2690002]`). Son dos cosas distintas que se
-  parecen: el del corchete es la clave de `config/mapeo.yaml`, el otro es el
-  que ve el partner.
+### 4. Leer `output/2026-09/_validacion.txt` ANTES de mandar nada
 
-Las filas van agrupadas por desarrollador, los desarrolladores en orden
-alfabético, y las de cada uno en orden cronológico.
+Es el informe de la corrida y alcanza por sí solo para decidir. Lo primero que
+dice es **quiénes entraron a los anexos**: contá esa lista contra tu equipo.
+Después vienen, si corresponde, los archivos que no entraron y por qué, los
+proyectos sin valor hora, los registros sin descripción y los avisos de carga
+(más de 12 h en un día, horas en fin de semana, días hábiles sin carga).
 
-### Antes era un Excel por desarrollador
+### 5. Completar a mano lo que la herramienta no puede saber
 
-Hasta septiembre de 2025 el partner recibía un Excel pivoteado por persona,
-con las horas sumadas por día. Cambió porque factura sobre el detalle: quiere
-ver cada carga con su hora de inicio, su descripción y su número de proyecto,
-y un solo adjunto por mes.
+Abrí el **Anexo II** (el Word) y completá:
 
-Ese formato **se eliminó del repo** (`escritor_excel.py`, sus tests y
-`templates/plantilla.xlsx`). Se había conservado «por si el partner vuelve
-atrás», pero el partner no volvió atrás: volvió a cambiar, y ahora recibe los
-dos anexos. Un escritor que nadie ejecuta no está probado contra nada real,
-y mantenerlo costaba más que recuperarlo del historial de git si alguna vez
-hiciera falta.
+| Qué | Dónde |
+|---|---|
+| **Principales trabajos** | Tabla 3. Sale un **borrador** agrupado por proyecto y ticket, con las horas sumadas y las descripciones pegadas una atrás de otra. Los totales cierran; la redacción es mecánica. Reescribila, y si fusionás líneas sumá sus horas. |
+| **Estado al cierre** | Tabla 3, última columna: `Terminado`, `En curso`, `En revisión de C.UNIX` o `Bloqueado`. Sale con la marca `[●]`. |
+| **Observaciones** | Tabla 4, las tres filas. Salen con `[●]`. Si no hay nada que decir, «Sin novedades». |
+| **Firmas** | Nombre, cargo y fecha de quien emite. |
+| **Contrato de fecha y fecha de emisión** | Salen como `[DD/MM/AAAA]` mientras no estén en `config/mapeo.yaml`. |
+
+Todo lo que quede con `[●]` o con `[DD/MM/AAAA]` es, justamente, lo que falta
+completar: está a la vista a propósito.
+
+### 6. Enviar los dos archivos
+
+La entrega del mes son **los dos anexos juntos**. Si alguno salió con
+`(INCOMPLETO - ... - NO ENVIAR)` en el nombre, no lo mandes: corregí lo que
+dice `_validacion.txt` y volvé a correr.
+
+---
+
+## Lo que sale solo y lo que no
+
+**Automático, de los datos:**
+
+- la hoja `Detalle` completa, una fila por registro;
+- la hoja `Datos`: el período y el equipo (persona, perfil, usuario de Kimai);
+- la tabla 1 del informe (horas e importe por proyecto): las horas salen de
+  los datos, el valor hora de la hoja `Datos` de la plantilla, y el importe se
+  calcula;
+- la tabla 2 (horas por persona): horas, días con registro y promedio;
+- el período en el encabezado del informe.
+
+**Borrador, para que lo edites:** la tabla 3. La agrupación por proyecto y
+ticket es mecánica y **los subtotales cierran exactos**, pero decidir qué
+trabajos cuentan la misma historia es criterio editorial y no se automatiza.
+
+**Sin tocar, para completar a mano:** la tabla 4 (observaciones), el plazo de
+entrega de la tabla 0 si no está configurado, las dos fechas del encabezado y
+la tabla de firmas. Las columnas de revisión de C.UNIX del Anexo II-A
+(`Revisión C.UNIX`, `Horas aprobadas`, `Observación C.UNIX`) también quedan
+vacías: las completa él.
+
+---
+
+## Las planillas que no salen de Kimai
+
+Van en `input/AAAA-MM/manual/` y se declaran en `config/mapeo.yaml`, bajo
+`fuentes_manuales:`. Si no hay ninguna, no hace falta tocar nada.
+
+### Alguien trabajó sin usuario de Kimai
+
+Pasa cuando un refuerzo entra al proyecto antes de que C.UNIX le dé el alta:
+sus horas quedan cargadas en la cuenta de otra persona. La planilla dice
+cuántas horas hizo cada día, y la herramienta **se las resta día por día** a la
+otra persona.
+
+```yaml
+fuentes_manuales:
+  horas_sin_kimai:
+    - persona: "Gabriel Denis"
+      planilla: "gabriel-denis.xlsx"
+      restar_a: "Alexis Carnero"
+      proyecto: "SELICO"
+```
+
+La planilla se lee de forma tolerante: alcanza con que tenga una fila de
+encabezados con **Fecha** y **Horas** (y conviene **Descripción**), en
+cualquier hoja y en cualquier orden. La fecha puede ser una fecha de Excel,
+`dd/mm/aaaa`, `aaaa-mm-dd` o texto en español sin año (`Dom 02 Ago`). Las filas
+de subtotal y de total se saltean solas. Si aun así no se entiende, el error
+dice qué se esperaba encontrar.
+
+**Si la resta no cierra —un día en que la otra persona no tiene horas, o no le
+alcanzan— no se genera nada.** Un reparto que no cuadra se factura mal y no se
+ve en una hoja de ochenta filas.
+
+**Cuando esa persona tenga usuario de Kimai, borrá su entrada de
+`config/mapeo.yaml`.** Si no, sus horas se restarían dos veces (y la
+herramienta frena avisándolo).
+
+### Alguien entregó sus descripciones aparte
+
+Es la excepción: desde septiembre de 2026 todos cargan la descripción en
+Kimai. La planilla tiene las mismas columnas que la hoja `Detalle` y **sólo
+aporta la descripción**; el día y las horas se verifican contra lo que ya está,
+y si no coinciden tampoco se genera nada.
+
+```yaml
+fuentes_manuales:
+  descripciones:
+    - persona: "Alexis Carnero"
+      planilla: "alexis-carnero.xlsx"
+```
+
+---
+
+## Qué hay que configurar en `config/mapeo.yaml`
+
+Todo es opcional. Un mes normal no obliga a tocar nada.
+
+```yaml
+anexos:
+  perfil_por_defecto: "Desarrollador"
+  dias_habiles_entrega: 5          # el plazo de la tabla de condiciones
+  contrato_de_fecha: "01/01/2026"  # si no está, queda [DD/MM/AAAA]
+  fecha_de_emision: "05/10/2026"   # idem
+
+proyectos:
+  PR2510126:                       # el código entre corchetes de Kimai
+    cliente: "MINVU"
+    proyecto: "SELICO"             # IGUAL que en la hoja «Datos»
+```
+
+Dos detalles que cuestan plata si se pasan por alto:
+
+- el **nombre del proyecto** tiene que escribirse igual acá y en la hoja
+  `Datos` de `templates/Anexo-II-A-Detalle-horas-KLG.xlsx`: es por ese nombre
+  que el informe le encuentra el **valor hora**. Si no lo encuentra, el
+  proyecto sale con sus horas y sin importe, el total a facturar queda vacío, y
+  `_validacion.txt` lo nombra;
+- el **valor hora de cada proyecto** se carga una sola vez, a mano, en esa hoja
+  `Datos` de la plantilla (columnas Proyecto / Cliente / Valor hora).
+
+Un proyecto que no esté en `mapeo.yaml` **no frena nada**: sale con el nombre
+que trae Kimai y queda listado en `_validacion.txt` con el bloque listo para
+pegar.
+
+La sección `personas:` sólo hace falta para quien exporta con el **resumen
+mensual**, que no trae el usuario: ahí la persona se resuelve por su `nombre:`,
+que tiene que coincidir exactamente con lo que muestra Kimai.
+
+---
 
 ## Si falta un desarrollador
 
-Este es el riesgo del archivo único y conviene tenerlo claro.
-
-Antes, si el archivo de alguien fallaba, **faltaba un Excel entero** en la
-carpeta: imposible no notarlo. Ahora todo va junto, así que un desarrollador
-que falta **es invisible**: el archivo se ve completo y no lo es.
+Este es el riesgo del entregable y conviene tenerlo claro: con todas las
+personas en dos documentos, **una que falta es invisible adentro**.
 
 Por eso, cuando algún export falla:
 
-- el archivo **se genera igual** con los que sí se pudieron leer, para que
+- los anexos **se generan igual** con los que sí se pudieron leer, para que
   puedas revisar lo que hay;
-- pero sale con el nombre
-  `Horas KLG-Oct2025 (INCOMPLETO - FALTAN 2 DESARROLLADORES - NO ENVIAR).xlsx`,
-  que es lo único que se ve al adjuntarlo a un mail;
-- y si en la carpeta había un `Horas KLG-Oct2025.xlsx` limpio de una corrida
-  anterior, se lo renombra a `... (CORRIDA ANTERIOR - NO ENVIAR).xlsx` para que
-  no se envíe en su lugar. No se borra: el dato sigue ahí.
+- pero salen con el nombre
+  `Anexo-II-A-Detalle-horas-KLG-2026-09 (INCOMPLETO - FALTAN 2 DESARROLLADORES - NO ENVIAR).xlsx`,
+  que es lo único que se ve al adjuntarlos a un mail;
+- y si en la carpeta había un anexo limpio de una corrida anterior, se lo
+  renombra a `... (CORRIDA ANTERIOR - NO ENVIAR).xlsx` para que no se envíe en
+  su lugar. **No se borra**: el dato sigue ahí.
 
-Cuando no falla nada, el nombre es el limpio.
+La herramienta nunca borra archivos tuyos.
+
+## La verificación de integridad
+
+Después de escribir el Anexo II-A, la herramienta lo **vuelve a abrir** y suma
+la columna `Horas`. Ese total tiene que coincidir exactamente con las horas de
+los exports que leyó. Si no coincide, **no genera el archivo** y lo dice
+fuerte: no es un aviso. Con ochenta filas de seis personas en una sola hoja,
+una fila perdida no se ve nunca a ojo.
+
+Cada anexo se escribe primero en un temporal y recién cuando salió entero se
+mueve sobre el nombre final, así que nunca queda un archivo a medio escribir.
+
+## Qué dice `_validacion.txt`
+
+Describe **la carpeta**, no sólo la corrida: no se envía lo que hizo el
+programa, se envía lo que hay en `output/<mes>/`.
+
+- **Quiénes entraron**, con cuántos registros y cuántas horas cada uno.
+- **Qué archivos NO entraron y por qué**, con el bloque listo para pegar
+  cuando el motivo es de configuración.
+- **Qué se generó** y qué queda para completar a mano.
+- **Qué `.xlsx` y `.docx` hay en la carpeta que esta corrida NO generó.** Esos
+  no van en el envío del mes.
+- **Los proyectos sin mapear** y **los proyectos sin valor hora**.
+- **Los registros sin descripción**, por persona y con la cantidad: el
+  contrato de C.UNIX pide la descripción para aprobar esas horas.
+- **Los avisos de carga**, agrupados por desarrollador: días hábiles sin
+  carga, horas en fin de semana, más de 12 h en un día, registros fuera del
+  mes.
+
+Si movés o agregás archivos a la carpeta *después* de correr, el informe ya no
+corresponde: volvé a correr.
+
+Si `_validacion.txt` no se puede escribir (lo más común: lo tenés abierto), el
+informe de esta corrida va a
+`_validacion (NO SE PUDO ESCRIBIR _validacion.txt - LEER ESTE).txt`, se avisa
+en consola y la corrida termina con error.
 
 ## Qué exports de Kimai lee
 
 Según con qué reporte exportes, Kimai da un archivo distinto. La herramienta
-lee los tres y no hay que decirle cuál es: lo detecta sola.
+lee los tres y los detecta sola.
 
-- **Timesheet en Excel** (`.xlsx` con `Date` en A1): una fila por registro de
-  tiempo. Es el **reporte de detalle**, el que conviene usar.
-- **Timesheet en CSV** (`.csv`): lo mismo, pero en texto. Kimai lo escribe con
-  la fecha al derecho (`2026-08-31`) y la duración en horas y minutos
-  (`2:00`).
+- **Timesheet en Excel** (`.xlsx` con `Date` en A1): el reporte de detalle, el
+  que conviene usar.
+- **Timesheet en CSV** (`.csv`): lo mismo, en texto.
 - **Resumen mensual** (`.xlsx` con `Total` en B1): la grilla de días, con las
-  horas ya sumadas. Sirve, pero trae menos (abajo).
+  horas ya sumadas. Sirve, pero sus filas van sin descripción y sin horario.
 
-Si un archivo no es ninguno de esos tres, **ese** desarrollador no entra al
-archivo del mes, el motivo dice qué encontró en la fila 1 y qué formatos se
-reconocen, y el archivo sale marcado como INCOMPLETO. Los demás entran igual.
-
-### Qué se pierde con el resumen mensual
-
-Ese export no trae cinco de las diez columnas: la hora de inicio, el usuario,
-el mail, la descripción y el número de proyecto.
-
-**Dos se pueden dejar vacías, y el archivo sale igual:**
-
-- la **descripción**, porque el partner la acepta vacía: 112 de las 160 filas
-  de su archivo de referencia lo están;
-- la **hora de inicio**, que queda en `00:00`: una de sus 160 filas está así.
-
-`_validacion.txt` te dice, por desarrollador, de qué reporte salieron sus
-filas, y avisa cuáles van sin descripción y sin hora de inicio. No frena nada:
-es para que decidas si lo mandás así o volvés a exportar a esa persona con el
-reporte de detalle.
-
-**Las otras tres no pueden ir vacías**, porque las 160 filas del partner las
-tienen llenas, sin una sola excepción: el **usuario**, el **mail** y el
-**número de proyecto**. Esas tres se completan desde `config/mapeo.yaml`, y
-**nunca se adivinan**:
-
-| Columna | De dónde sale |
-|---|---|
-| `Name` | del propio archivo |
-| `User` | la **clave** de la persona en `personas:` |
-| `E-mail` | `mail:` de esa persona |
-| `Project number` | `numero_proyecto:` de ese proyecto |
-
-Si al mapeo le falta alguno de los tres, **ese archivo no entra**. El motivo
-nombra al desarrollador o al proyecto y trae el bloque listo para pegar en
-`config/mapeo.yaml`. Los demás desarrolladores entran igual.
-
-El `Project number` es el que menos se puede improvisar: **no** es el código
-entre corchetes. El proyecto `[AD2690002]` tiene `Project number` `210`. No se
-deduce de nada, así que o está declarado o el archivo frena. Y dejarlo vacío
-no es opción: el partner factura sobre esa columna.
-
-Si exportaste con el **reporte de detalle**, nada de esto aplica: el usuario,
-el mail y el número vienen de Kimai, y el mapeo no interviene aunque declare
-otra cosa.
-
-## Qué dice `_validacion.txt`
-
-Es el informe de lo que quedó en `output/<mes>/` y alcanza por sí solo para
-decidir qué se envía:
-
-- **Quiénes entraron al archivo**, con cuántos registros y cuántas horas cada
-  uno. Contá esa lista contra tu equipo antes de mandar nada.
-- **Qué archivos NO entraron y por qué.** Si aparece esta lista, el archivo
-  del mes está incompleto y lleva la marca en el nombre. Hay que corregir el
-  motivo y volver a correr antes de enviar.
-- **El nombre del archivo generado**, con su cantidad de filas y su total de
-  horas.
-- **Qué `.xlsx` hay en la carpeta que esta corrida NO generó.** Los Excel del
-  formato anterior, un consolidado marcado como INCOMPLETO de otra corrida, o
-  archivos que dejaste vos ahí. La herramienta no los borra, pero los nombra
-  uno por uno: **esos no van en el envío del mes.**
-- **De qué reporte salió cada desarrollador**, y el aviso de quiénes van sin
-  descripción y sin hora de inicio por haber exportado el resumen mensual.
-- **Los proyectos sin mapear**, con el nombre que se usó y el bloque listo para
-  pegar en `config/mapeo.yaml` si querés que el partner vea otro.
-- **Los avisos de validación**, agrupados por desarrollador: días hábiles sin
-  carga, horas en fin de semana, más de 12 h en un día, registros fuera del
-  mes. Y, del mes entero, el aviso de un mismo `Project number` que aparece
-  con dos nombres de proyecto distintos.
-
-## La verificación de integridad
-
-Después de escribir el archivo, la herramienta lo **vuelve a abrir** y suma la
-columna `Duration`. Ese total tiene que coincidir exactamente con las horas de
-los exports que leyó. Si no coincide, **no genera nada** y lo dice fuerte: no
-es un aviso.
-
-Con 160 filas de cinco desarrolladores en un solo archivo, una fila perdida no
-se ve nunca a ojo.
-
-## Qué hace falta en `config/mapeo.yaml`
-
-Depende de con qué reporte exportó cada persona.
-
-**Si exportó con el reporte de detalle, el mapeo es sólo un pulido de
-nombres:**
-
-- Un proyecto que no esté declarado **no frena nada**: sale con el nombre que
-  trae Kimai, y queda listado en `_validacion.txt` con el bloque listo para
-  pegar por si querés cambiarlo. Cada fila lleva su `Project number`, así que
-  la trazabilidad no depende del mapeo.
-- La sección `personas:` es opcional: el nombre, el usuario y el mail de cada
-  desarrollador vienen de Kimai.
-
-**Si exportó con el resumen mensual, el mapeo es obligatorio para esa persona
-y para sus proyectos**, porque ese reporte no trae el usuario, el mail ni el
-número de proyecto:
-
-```yaml
-personas:
-  lzalazar:                                   # esta clave ES el User
-    nombre: "Lautaro Zalazar"                 # como lo muestra Kimai
-    archivo: "L Zalazar"
-    mail: "lautaro.zalazar@cunix.net"         # la columna E-mail
-
-proyectos:
-  AD2690002:                                  # el código entre corchetes
-    cliente: "Sistemas - C.UNIX"
-    proyecto: "VictoriusCP2"
-    numero_proyecto: "210"                    # el Project number de Kimai
-```
-
-- La **clave** de la persona es el `User` que ve el partner, y el `nombre:`
-  tiene que coincidir exactamente con lo que muestra Kimai: es lo único que
-  el resumen mensual trae para identificarla.
-- `mail:` y `numero_proyecto:` son **opcionales** en el archivo, y sólo los
-  usan las filas del resumen mensual. Si los escribís vacíos, el mapeo no
-  carga: mejor fallar con el nombre de la entrada que dejar una columna en
-  blanco del otro lado.
-- `numero_proyecto:` **no** es el código entre corchetes. Miralo en Kimai, en
-  la ficha del proyecto.
-
-### El nombre del archivo de salida
-
-Se configura en `config/mapeo.yaml`:
-
-```yaml
-archivo_salida: "Horas KLG-{mes}{anio}.xlsx"
-```
-
-`{mes}` es el mes en tres letras (`Jan`…`Dec`) y `{anio}` el año. El archivo
-de referencia del partner usa `Sept` para septiembre: si querés esa forma
-exacta, o los meses en español, se escribe el mes a mano en el patrón
-(`"Horas KLG-Sept{anio}.xlsx"`), sabiendo que así hay que actualizar esa línea
-todos los meses.
-
-## Qué toca la herramienta en `output/<mes>/`
-
-Sólo el archivo que ella misma genera en esa corrida, y el limpio de una
-corrida anterior cuando tiene que apartarlo (lo renombra, nunca lo borra).
-Nada más de esa carpeta se toca: si dejás ahí un archivo tuyo, sigue estando
-después de correr.
-
-El archivo se escribe primero en un temporal, se verifica ahí la integridad, y
-recién cuando salió entero se mueve sobre el nombre final. Así nunca queda un
-archivo a medio escribir, y si algo falla, el que ya estaba no se toca.
-
-`_validacion.txt` se reescribe en cada corrida y enumera **todos** los `.xlsx`
-que quedan en la carpeta: los que generó y los que no. Es decir, describe la
-carpeta, no lo que hizo la corrida. Lo que el informe no puede saber es lo que
-pase con la carpeta *después* de correr: si movés o agregás archivos a mano, el
-informe ya no corresponde y hay que volver a correr.
-
-Si `_validacion.txt` no se puede escribir (lo más común: lo tenés abierto), el
-de la corrida anterior queda en disco describiendo otra cosa. En ese caso la
-herramienta escribe el informe de esta corrida en
-`_validacion (NO SE PUDO ESCRIBIR _validacion.txt - LEER ESTE).txt`, lo avisa
-en consola y termina con error.
-
-## Qué dato de Kimai va a parar a dónde
-
-De cada registro de tiempo se conservan, además de la fecha y las horas:
-
-| Dato de Kimai | Para qué |
-|---|---|
-| `From` (hora de inicio) | Va junto con la fecha en la columna `Date` |
-| `Name` (`Matias Zalazar`) | Columna `Name` |
-| `User` (`mzalazar`) | Columna `User` |
-| `E-mail` | Columna `E-mail` |
-| `Customer` y `Project` (texto crudo) | De ahí salen `Customer` y `Project` si el proyecto no está mapeado |
-| `Description` | Columna `Description`; **puede venir vacía y está bien** |
-| `Project number` | Columna `Project number`, tal cual |
-
-El `Customer` de algunos proyectos viene con el código entre corchetes
-(`[616050001] Instituto de Salud Pública`) y el de otros no (`CUNIX`): los dos
-casos se derivan bien.
-
-## Un export por desarrollador
-
-En Kimai conviene exportar **filtrando por un solo desarrollador**, un archivo
-por persona: así, si uno falla, se sabe cuál. Pero si un export trae horas de
-dos personas, el archivo se genera igual y cada fila lleva su propio `Name`,
-`User` y `E-mail`: en este formato es imposible que las horas de uno se le
-imputen a otro.
-
-Lo que sí deja a ese archivo afuera es que el export no traiga **ninguna**
-fila de datos, o que **todas** sus filas caigan fuera del mes que estás
-generando: las dos cosas suelen ser el rango de fechas mal puesto en Kimai. El
-motivo, con el rango de fechas que sí trae el archivo, queda en
-`_validacion.txt`.
+Si un archivo no es ninguno de esos tres, **ese** desarrollador no entra, el
+motivo dice qué encontró en la fila 1, y los demás entran igual.
 
 ## Tests
 
 ```
-python -m pytest -v
+python -m pytest -q
 ```
 
 ## Estructura
@@ -319,7 +288,7 @@ python -m pytest -v
 config/mapeo.yaml          configuración editada a mano
 templates/                 las plantillas vacías de los dos anexos de C.UNIX
 input/AAAA-MM/             exports de Kimai, .xlsx o .csv (se versionan)
-input/AAAA-MM/manual/      planillas que NO salen de Kimai (ver abajo)
+input/AAAA-MM/manual/      planillas que NO salen de Kimai
 output/AAAA-MM/            lo que se entrega (se versiona con `git add -f`)
 cunix_horas/               el código
 scripts/                   los scripts de un mes concreto
@@ -327,38 +296,31 @@ tests/                     los tests
 docs/superpowers/          spec y plan de implementación
 ```
 
-### `input/AAAA-MM/manual/`
+### `input/2026-08/manual/`
 
-Ahí van las planillas del mes que **no salen de Kimai** y que, sin embargo,
-hacen falta para armar los anexos. De agosto de 2026 hay dos:
+De agosto de 2026 hay cuatro archivos ahí:
 
 | Archivo | Qué es |
 |---|---|
 | `gabriel-denis.xlsx` | Las 91 h de Gabriel Denis, que trabajó sin usuario de Kimai y cuyas horas quedaron cargadas en la cuenta de Alexis Carnero. |
 | `alexis-carnero.xlsx` | El detalle diario que entregó Alexis Carnero después del reclamo de C.UNIX. Aporta las descripciones que Kimai nunca registró. |
-| `anexo-II-informe-cunix.docx` | El Anexo II tal como lo mandó C.UNIX, con agosto cargado como ejemplo. Es la base que corrige el script. |
-| `anexo-II-A-detalle-cunix.xlsx` | Lo mismo, el Anexo II-A. De acá salieron también las plantillas vacías de `templates/`. |
+| `anexo-II-informe-cunix.docx` | El Anexo II tal como lo mandó C.UNIX, con agosto cargado como ejemplo. |
+| `anexo-II-A-detalle-cunix.xlsx` | Lo mismo, el Anexo II-A. De acá salieron las plantillas vacías de `templates/`. |
 
-Son la **única copia** de esos datos: sin ellas, agosto de 2026 no se puede
-volver a generar. Por eso están versionadas y no en la raíz.
+Son la **única copia** de esos datos: sin ellas agosto de 2026 no se puede
+volver a generar. Por eso están versionadas.
 
-El CLI **no mira** esta carpeta: recorre `input/AAAA-MM/*.xlsx` y `*.csv` sin
-entrar en subcarpetas. Hoy la lee sólo `scripts/anexos_agosto_2026.py`.
+### `scripts/anexos_agosto_2026.py`
 
-## Lo que falta
+Agosto de 2026 se entregó **corrigiendo el ejemplo que mandó C.UNIX**, no
+armándolo desde cero. Ese script es el registro auditable de esa corrección y
+lo único que reproduce lo entregado tal cual.
 
-- **Promover los anexos a la herramienta.** Hoy los genera
-  `scripts/anexos_agosto_2026.py`, con los textos y los números de agosto de
-  2026 escritos adentro. El CLI todavía no sabe nada de las plantillas de
-  `templates/`.
-- **Decidir qué pasa con el consolidado plano.** `detalle.py` y
-  `escritor_detalle.py` siguen siendo lo que corre `python -m cunix_horas`,
-  pero C.UNIX ya no recibe ese archivo.
-- **La plantilla del Anexo II-A arrastra dos cosas de agosto de 2026**, en
-  hojas que C.UNIX arma y KLG no toca: `Resumen!B5` tiene `306` fijo (las
-  horas que C.UNIX concilia contra Kimai, que él carga a mano) y la hoja
-  `Instrucciones` describe agosto como ejemplo. Hay que resolverlo antes de
-  usar la plantilla para otro mes.
-- **El párrafo «EJEMPLO: agosto 2026…»** sigue en la plantilla del Anexo II:
-  es la nota con la que C.UNIX la mandó, y queda pendiente decidir si se
-  borra al generar.
+```
+python scripts/anexos_agosto_2026.py
+```
+
+**Escribe el Anexo II-A con el mismo nombre que usa la herramienta**, así que
+correrlo pisa lo que haya generado `python -m cunix_horas 2026-08` en esa
+carpeta. Es a propósito: lo que KLG entregó en agosto es lo que sale de ahí.
+De septiembre en adelante no hace falta para nada.

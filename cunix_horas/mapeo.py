@@ -7,19 +7,21 @@ from pathlib import Path
 
 import yaml
 
+from cunix_horas.anexos import (
+    ConfigAnexos,
+    DescripcionesAparte,
+    FuentesManuales,
+    HorasSinKimai,
+    PATRON_DETALLE,
+    PATRON_INFORME,
+    PERFIL_POR_DEFECTO,
+)
+
 _ALIAS = re.compile(r"^\s*\[[^\]]+\]\s*([^|]+)")
 
 # Prefijo '[codigo] ' del texto crudo de Kimai. Se saca para derivar el nombre
 # que ve el partner cuando el proyecto no esta declarado en el mapeo.
 _PREFIJO_CODIGO = re.compile(r"^\s*\[[^\]]+\]\s*")
-
-# Patrón del nombre del archivo que recibe el partner, cuando
-# config/mapeo.yaml no lo declara.
-PATRON_ARCHIVO_SALIDA = "Horas KLG-{mes}{anio}.xlsx"
-
-# Texto de la única fila de actividad de cada proyecto, cuando `config/mapeo.yaml`
-# no lo declara. Es lo que el partner viene viendo desde siempre.
-ACTIVIDAD_POR_DEFECTO = "Desarrollo"
 
 
 class ErrorMapeo(Exception):
@@ -148,85 +150,154 @@ def _sugerencia_de_persona(identificador: str, archivo: str) -> str:
     )
 
 
-def _leer_actividad(contenido: dict, ruta: Path) -> str:
-    """Texto de la única fila de actividad, del YAML o el de por defecto.
-
-    Es opcional: si no está declarado vale `Desarrollo`, que es lo que el
-    partner recibió siempre. Si está pero vacío o no es texto, frena: un Excel
-    con la fila de actividad en blanco o con un número adentro se vería raro
-    del otro lado y nadie sabría de dónde salió.
-    """
-    if "actividad" not in contenido:
-        return ACTIVIDAD_POR_DEFECTO
-
-    actividad = contenido["actividad"]
-    if not isinstance(actividad, str) or not actividad.strip():
-        raise ErrorMapeo(
-            f"'actividad:' en {ruta} tiene que ser un texto no vacío: es el "
-            f"nombre de la única fila de actividad de cada proyecto en el "
-            f"Excel del partner.\n"
-            f"  Sacá la línea para usar el valor por defecto "
-            f'("{ACTIVIDAD_POR_DEFECTO}"), o poné el texto entre comillas.'
-        )
-    return actividad.strip()
-
-
-def _leer_archivo_salida(contenido: dict, ruta: Path) -> str:
-    """Patrón del nombre del archivo del partner, del YAML o el de por defecto.
+def _patron(
+    contenido: dict, clave: str, por_defecto: str, extension: str, ruta: Path
+) -> str:
+    """Un patrón de nombre de archivo de `anexos:`, validado contra `{periodo}`.
 
     Se valida acá y no al escribir: si el patrón está mal, el error tiene que
-    salir antes de leer ningún export, y no después de haber procesado todo.
+    salir antes de leer ningún export y no después de haber procesado todo.
     """
-    if "archivo_salida" not in contenido:
-        return PATRON_ARCHIVO_SALIDA
+    valor = (contenido or {}).get(clave)
+    if valor is None:
+        return por_defecto
 
-    patron = contenido["archivo_salida"]
     ayuda = (
         f"  Sacá la línea para usar el valor por defecto "
-        f'("{PATRON_ARCHIVO_SALIDA}"), o escribilo entre comillas usando '
-        f"{{mes}} y {{anio}}."
+        f'("{por_defecto}"), o escribilo entre comillas usando {{periodo}}, '
+        f"que vale el mes en formato AAAA-MM."
     )
-    if not isinstance(patron, str) or not patron.strip():
+    if not isinstance(valor, str) or not valor.strip():
         raise ErrorMapeo(
-            f"'archivo_salida:' en {ruta} tiene que ser un texto no vacío: es "
-            f"el nombre del archivo que recibe el partner.\n" + ayuda
+            f"'{clave}:' bajo 'anexos:' en {ruta} tiene que ser un texto no "
+            f"vacío: es el nombre de un archivo que recibe C.UNIX.\n" + ayuda
         )
-    patron = patron.strip()
+    patron = valor.strip()
     try:
-        prueba = patron.format(mes="Aug", anio=2026)
+        prueba = patron.format(periodo="2026-09")
     except (KeyError, IndexError, ValueError):
         raise ErrorMapeo(
-            f"'archivo_salida:' en {ruta} usa algo que no se entiende: "
-            f"{patron!r}.\n"
-            f"  Los únicos reemplazos que existen son {{mes}} y {{anio}}.\n"
-            + ayuda
+            f"'{clave}:' bajo 'anexos:' en {ruta} usa algo que no se "
+            f"entiende: {patron!r}.\n"
+            f"  El único reemplazo que existe es {{periodo}}.\n" + ayuda
         ) from None
-    if not prueba.lower().endswith(".xlsx"):
+    if not prueba.lower().endswith(extension):
         raise ErrorMapeo(
-            f"'archivo_salida:' en {ruta} tiene que terminar en .xlsx: con "
-            f"{patron!r} el archivo se llamaría {prueba!r} y Excel no lo "
-            f"abriría.\n" + ayuda
+            f"'{clave}:' bajo 'anexos:' en {ruta} tiene que terminar en "
+            f"{extension}: con {patron!r} el archivo se llamaría {prueba!r} y "
+            f"no se abriría.\n" + ayuda
         )
     return patron
 
 
+def _leer_anexos(contenido: dict, ruta: Path) -> ConfigAnexos:
+    """La sección `anexos:`, toda opcional."""
+    datos = contenido.get("anexos") or {}
+    if not isinstance(datos, dict):
+        raise ErrorMapeo(
+            f"'anexos:' en {ruta} tiene que ser un bloque de opciones, no "
+            f"{type(datos).__name__}."
+        )
+    perfiles = datos.get("perfiles") or {}
+    if not isinstance(perfiles, dict):
+        raise ErrorMapeo(
+            f"'perfiles:' bajo 'anexos:' en {ruta} tiene que ser una lista de "
+            f'"Nombre Apellido": "Perfil".'
+        )
+    return ConfigAnexos(
+        archivo_detalle=_patron(
+            datos, "archivo_detalle", PATRON_DETALLE, ".xlsx", ruta
+        ),
+        archivo_informe=_patron(
+            datos, "archivo_informe", PATRON_INFORME, ".docx", ruta
+        ),
+        perfil_por_defecto=_texto_opcional(
+            datos.get("perfil_por_defecto"), "perfil_por_defecto", "'anexos:'", ruta
+        )
+        or PERFIL_POR_DEFECTO,
+        perfiles=tuple(
+            (str(persona), str(perfil)) for persona, perfil in sorted(perfiles.items())
+        ),
+        # Los tres de abajo quedan como marcador en el documento si no están.
+        # Se aceptan números, para poder escribir `dias_habiles_entrega: 5`.
+        dias_habiles_entrega=str(datos.get("dias_habiles_entrega") or "").strip(),
+        contrato_de_fecha=str(datos.get("contrato_de_fecha") or "").strip(),
+        fecha_de_emision=str(datos.get("fecha_de_emision") or "").strip(),
+    )
+
+
+def _entradas(datos, clave: str, ruta: Path) -> list:
+    lista = (datos or {}).get(clave) or []
+    if not isinstance(lista, list):
+        raise ErrorMapeo(
+            f"'{clave}:' bajo 'fuentes_manuales:' en {ruta} tiene que ser una "
+            f"lista de entradas, cada una empezando con '- '."
+        )
+    return lista
+
+
+def _campo(entrada, campo: str, clave: str, ruta: Path) -> str:
+    valor = (entrada or {}).get(campo) if isinstance(entrada, dict) else None
+    if not isinstance(valor, str) or not valor.strip():
+        raise ErrorMapeo(
+            f"A una entrada de '{clave}:' bajo 'fuentes_manuales:' en {ruta} "
+            f"le falta '{campo}:'.\n"
+            f"  Cada entrada tiene que decir, como mínimo, de quién son las "
+            f"horas y en qué planilla de input/<mes>/manual/ están."
+        )
+    return valor.strip()
+
+
+def _leer_fuentes_manuales(contenido: dict, ruta: Path) -> FuentesManuales:
+    """La sección `fuentes_manuales:`, que es opcional entera.
+
+    Un mes en que todos cargan sus horas y sus descripciones en Kimai no
+    declara nada acá y corre igual.
+    """
+    datos = contenido.get("fuentes_manuales") or {}
+    if not isinstance(datos, dict):
+        raise ErrorMapeo(
+            f"'fuentes_manuales:' en {ruta} tiene que ser un bloque con "
+            f"'horas_sin_kimai:' y/o 'descripciones:'."
+        )
+
+    horas = tuple(
+        HorasSinKimai(
+            persona=_campo(entrada, "persona", "horas_sin_kimai", ruta),
+            planilla=_campo(entrada, "planilla", "horas_sin_kimai", ruta),
+            restar_a=_campo(entrada, "restar_a", "horas_sin_kimai", ruta),
+            proyecto=str(entrada.get("proyecto") or "").strip(),
+            nota=str(entrada.get("nota") or "").strip(),
+        )
+        for entrada in _entradas(datos, "horas_sin_kimai", ruta)
+    )
+    descripciones = tuple(
+        DescripcionesAparte(
+            persona=_campo(entrada, "persona", "descripciones", ruta),
+            planilla=_campo(entrada, "planilla", "descripciones", ruta),
+        )
+        for entrada in _entradas(datos, "descripciones", ruta)
+    )
+    return FuentesManuales(horas, descripciones)
+
+
 class Mapeo:
-    """Traduce códigos de Kimai a los nombres del Excel del partner."""
+    """Traduce códigos de Kimai a los nombres que ve C.UNIX en los anexos."""
 
     def __init__(
         self,
         personas: dict[str, Persona],
         proyectos: dict[str, DestinoProyecto],
-        actividad: str = ACTIVIDAD_POR_DEFECTO,
-        archivo_salida: str = PATRON_ARCHIVO_SALIDA,
+        anexos: ConfigAnexos = ConfigAnexos(),
+        fuentes_manuales: FuentesManuales = FuentesManuales(),
     ) -> None:
         self._personas = personas
         self._proyectos = proyectos
-        # Patrón del nombre del único archivo que recibe el partner.
-        self.archivo_salida = archivo_salida
-        # El partner no ve cómo clasifican los desarrolladores en Kimai: cada
-        # proyecto sale con una sola fila de actividad, siempre con este texto.
-        self.actividad = actividad
+        # Nombres de los dos anexos, perfiles y los textos del informe que el
+        # dueño configura.
+        self.anexos = anexos
+        # Las planillas de input/<mes>/manual/ que este mes necesita.
+        self.fuentes_manuales = fuentes_manuales
         # El resumen mensual de Kimai no trae el username, sólo el nombre para
         # mostrar. Este índice permite resolver la persona también por ahí, sin
         # agregar configuración nueva: el 'nombre:' ya está en cada entrada.
@@ -243,10 +314,9 @@ class Mapeo:
 
         contenido = yaml.safe_load(ruta.read_text(encoding="utf-8")) or {}
 
-        # 'personas:' es opcional desde que el entregable es el detalle plano:
-        # el nombre, el usuario y el mail de cada desarrollador salen de Kimai,
-        # así que el mapeo ya no los necesita para nada. La sección sigue
-        # leyéndose porque el escritor pivoteado, que queda en el repo, la usa.
+        # 'personas:' es opcional para quien exporta con el reporte de detalle:
+        # ese export trae el nombre y el usuario de cada desarrollador. Sigue
+        # haciendo falta para quien exporta con el resumen mensual.
         if "proyectos" not in contenido:
             raise ErrorMapeo(f"A {ruta} le falta la sección 'proyectos:'")
 
@@ -287,8 +357,8 @@ class Mapeo:
         return cls(
             personas,
             proyectos,
-            _leer_actividad(contenido, ruta),
-            _leer_archivo_salida(contenido, ruta),
+            _leer_anexos(contenido, ruta),
+            _leer_fuentes_manuales(contenido, ruta),
         )
 
     def proyecto_opcional(self, codigo: str) -> DestinoProyecto | None:

@@ -1,9 +1,13 @@
 # cunix-horas — Conversión de exports Kimai a Excel mensual del partner
 
 **Fecha:** 2026-09-24
-**Estado:** Implementado. Actualizado el 2026-09-28 con el cambio de entregable (del Excel pivoteado al archivo único con el detalle plano) y el 2026-10-01 con la limpieza de los dos formatos muertos y la preparación de las plantillas de los anexos.
+**Estado:** Implementado. Actualizado el 2026-09-28 con el cambio de entregable (del Excel pivoteado al archivo único con el detalle plano) y el 2026-10-01 con la promoción de los dos anexos de C.UNIX a entregable de la herramienta.
 
-> **El entregable volvió a cambiar.** Desde agosto de 2026 KLG le entrega a C.UNIX **dos documentos**: el **Anexo II** (informe mensual, Word) y el **Anexo II-A** (detalle, Excel), con el formato que mandó C.UNIX. Las plantillas vacías están en `templates/`. **El CLI todavía no las usa**: agosto salió de `scripts/anexos_agosto_2026.py`, un script atado a ese mes. Lo que esta spec describe de acá en adelante es el pipeline del consolidado plano, que sigue siendo lo que corre `python -m cunix_horas`. Promover los anexos a la herramienta es trabajo pendiente y todavía no está especificado.
+> **El entregable de hoy son los dos anexos de C.UNIX.** `python -m cunix_horas AAAA-MM` arma el **Anexo II** (informe mensual, Word) y el **Anexo II-A** (detalle, Excel) a partir de las plantillas vacías de `templates/`, que nunca se modifican. El consolidado plano que describe el resto de esta spec **se eliminó** (`detalle.py`, `escritor_detalle.py` y sus tests): de la etapa anterior sobreviven, sin cambios, la lectura de los exports de Kimai (`lector_*.py`, `kimai_comun.py`), el completado desde el mapeo (`completado.py`) y los avisos de carga (`validador.py`). Lo que esta spec dice de la **lectura** sigue vigente; lo que dice del **entregable** quedó viejo y hay que leerlo contra el README.
+>
+> Módulos nuevos: `anexos.py` (período, nombres y formato de números), `filas_anexo.py` (las filas de la hoja `Detalle` y las tres tablas del informe), `fuentes_manuales.py` (las planillas de `input/<mes>/manual/`, configurables en `config/mapeo.yaml`), `escritor_anexo_detalle.py` y `escritor_anexo_informe.py`.
+>
+> `scripts/anexos_agosto_2026.py` **se conserva**: agosto de 2026 se entregó corrigiendo el ejemplo que mandó C.UNIX, no armándolo desde cero, y ese script es lo único que lo reproduce tal cual. Desde la promoción importa del paquete el formato de números, la edición de Word y la reinyección del `extLst`, así que ya no duplica ese código.
 
 ## Problema
 

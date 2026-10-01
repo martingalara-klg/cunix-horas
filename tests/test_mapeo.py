@@ -2,8 +2,9 @@ import re
 
 import pytest
 import yaml
-from conftest import FIXTURES
+from conftest import FIXTURES, RAIZ
 
+from cunix_horas.anexos import Periodo
 from cunix_horas.mapeo import ErrorMapeo, Mapeo
 
 
@@ -257,35 +258,6 @@ def test_un_nombre_sin_mapear_sugiere_un_yaml_pegable_con_ese_nombre(tmp_path):
     assert "archivo" in entrada
 
 
-# --- Texto de la única fila de actividad ---------------------------------
-
-
-def test_actividad_por_defecto_cuando_el_yaml_no_la_declara():
-    """mapeo-test.yaml no tiene 'actividad:': vale lo que el partner vio siempre."""
-    assert cargar().actividad == "Desarrollo"
-
-
-def test_actividad_declarada_en_el_yaml(tmp_path):
-    ruta = tmp_path / "mapeo.yaml"
-    ruta.write_text(
-        'actividad: "Servicios profesionales"'
-        + CUERPO_MINIMO,
-        encoding="utf-8",
-    )
-    assert Mapeo.cargar(ruta).actividad == "Servicios profesionales"
-
-
-@pytest.mark.parametrize("valor", ['""', '"   "', "", "7"])
-def test_actividad_vacia_o_no_textual_falla(tmp_path, valor):
-    ruta = tmp_path / "mapeo.yaml"
-    ruta.write_text("actividad: " + valor + CUERPO_MINIMO, encoding="utf-8")
-    with pytest.raises(ErrorMapeo) as excepcion:
-        Mapeo.cargar(ruta)
-    mensaje = str(excepcion.value)
-    assert "actividad:" in mensaje
-    assert "Desarrollo" in mensaje
-
-
 # --- 'personas:' dejó de ser obligatorio ------------------------------------
 # El archivo que recibe el partner trae el nombre, el usuario y el mail de
 # cada desarrollador tal como vienen de Kimai: el mapeo ya no los necesita.
@@ -307,32 +279,141 @@ def test_un_proyecto_sin_declarar_devuelve_none_en_vez_de_frenar(tmp_path):
     assert Mapeo.cargar(ruta).proyecto_opcional("NO-ESTA") is None
 
 
-# --- El nombre del archivo que recibe el partner ----------------------------
+# --- La sección 'anexos:' ---------------------------------------------------
+# Todo opcional: lo que no esté se resuelve solo o queda como marcador a la
+# vista en el documento. Nunca se inventa una fecha ni un plazo.
 
 
-def test_el_patron_del_archivo_de_salida_tiene_un_valor_por_defecto(tmp_path):
+def test_los_nombres_de_los_anexos_tienen_valor_por_defecto(tmp_path):
     ruta = tmp_path / "m.yaml"
     ruta.write_text("proyectos:\n", encoding="utf-8")
-    assert Mapeo.cargar(ruta).archivo_salida == "Horas KLG-{mes}{anio}.xlsx"
+    anexos = Mapeo.cargar(ruta).anexos
+    assert anexos.nombre_detalle(Periodo(2026, 9)) == (
+        "Anexo-II-A-Detalle-horas-KLG-2026-09.xlsx"
+    )
+    assert anexos.nombre_informe(Periodo(2026, 9)) == (
+        "Anexo-II-Informe-mensual-horas-KLG-2026-09.docx"
+    )
 
 
-def test_el_patron_del_archivo_de_salida_se_puede_cambiar(tmp_path):
+def test_los_nombres_de_los_anexos_se_pueden_cambiar(tmp_path):
     ruta = tmp_path / "m.yaml"
     ruta.write_text(
-        'proyectos:\narchivo_salida: "Horas KLG-Sept{anio}.xlsx"\n', encoding="utf-8"
+        'proyectos:\nanexos:\n  archivo_detalle: "Detalle {periodo}.xlsx"\n',
+        encoding="utf-8",
     )
-    assert Mapeo.cargar(ruta).archivo_salida == "Horas KLG-Sept{anio}.xlsx"
+    assert Mapeo.cargar(ruta).anexos.nombre_detalle(Periodo(2026, 9)) == (
+        "Detalle 2026-09.xlsx"
+    )
 
 
 def test_un_patron_con_un_reemplazo_inventado_falla_en_espanol(tmp_path):
     ruta = tmp_path / "m.yaml"
-    ruta.write_text('proyectos:\narchivo_salida: "Horas {dia}.xlsx"\n', encoding="utf-8")
-    with pytest.raises(ErrorMapeo, match=r"\{mes\} y \{anio\}"):
+    ruta.write_text(
+        'proyectos:\nanexos:\n  archivo_detalle: "Detalle {dia}.xlsx"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ErrorMapeo, match=r"\{periodo\}"):
         Mapeo.cargar(ruta)
 
 
-def test_un_patron_que_no_termina_en_xlsx_falla_en_espanol(tmp_path):
+def test_un_patron_que_no_termina_en_la_extension_correcta_falla(tmp_path):
     ruta = tmp_path / "m.yaml"
-    ruta.write_text('proyectos:\narchivo_salida: "Horas {mes}"\n', encoding="utf-8")
-    with pytest.raises(ErrorMapeo, match="terminar en .xlsx"):
+    ruta.write_text(
+        'proyectos:\nanexos:\n  archivo_informe: "Informe {periodo}.xlsx"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ErrorMapeo, match="terminar en .docx"):
         Mapeo.cargar(ruta)
+
+
+def test_sin_configurar_no_hay_plazo_ni_fechas(tmp_path):
+    """El informe sale con los marcadores a la vista, que es lo que se busca."""
+    ruta = tmp_path / "m.yaml"
+    ruta.write_text("proyectos:\n", encoding="utf-8")
+    anexos = Mapeo.cargar(ruta).anexos
+    assert anexos.dias_habiles_entrega == ""
+    assert anexos.contrato_de_fecha == ""
+    assert anexos.fecha_de_emision == ""
+    assert anexos.perfil_por_defecto == "Desarrollador"
+
+
+def test_el_plazo_de_entrega_se_puede_escribir_como_numero(tmp_path):
+    ruta = tmp_path / "m.yaml"
+    ruta.write_text(
+        "proyectos:\nanexos:\n  dias_habiles_entrega: 5\n", encoding="utf-8"
+    )
+    assert Mapeo.cargar(ruta).anexos.dias_habiles_entrega == "5"
+
+
+def test_los_perfiles_distintos_del_general_se_declaran_por_persona(tmp_path):
+    ruta = tmp_path / "m.yaml"
+    ruta.write_text(
+        'proyectos:\nanexos:\n  perfil_por_defecto: "Desarrollador"\n'
+        '  perfiles:\n    "Ana Perez": "Líder técnica"\n',
+        encoding="utf-8",
+    )
+    anexos = Mapeo.cargar(ruta).anexos
+    assert anexos.perfiles_por_persona == {"Ana Perez": "Líder técnica"}
+
+
+# --- La sección 'fuentes_manuales:' -----------------------------------------
+
+
+def test_un_mes_sin_fuentes_manuales_declaradas_carga_igual(tmp_path):
+    ruta = tmp_path / "m.yaml"
+    ruta.write_text("proyectos:\n", encoding="utf-8")
+    fuentes = Mapeo.cargar(ruta).fuentes_manuales
+    assert fuentes.hay_alguna is False
+    assert fuentes.horas_sin_kimai == ()
+    assert fuentes.descripciones == ()
+
+
+def test_las_horas_de_quien_no_esta_en_kimai_se_declaran_con_a_quien_restarselas(tmp_path):
+    ruta = tmp_path / "m.yaml"
+    ruta.write_text(
+        "proyectos:\nfuentes_manuales:\n  horas_sin_kimai:\n"
+        '    - persona: "Gabriel Denis"\n'
+        '      planilla: "gabriel-denis.xlsx"\n'
+        '      restar_a: "Alexis Carnero"\n'
+        '      proyecto: "SELICO"\n',
+        encoding="utf-8",
+    )
+    fuentes = Mapeo.cargar(ruta).fuentes_manuales
+    assert fuentes.hay_alguna is True
+    (entrada,) = fuentes.horas_sin_kimai
+    assert entrada.persona == "Gabriel Denis"
+    assert entrada.restar_a == "Alexis Carnero"
+    assert entrada.proyecto == "SELICO"
+
+
+def test_una_fuente_de_horas_sin_restar_a_falla_diciendo_que_falta(tmp_path):
+    ruta = tmp_path / "m.yaml"
+    ruta.write_text(
+        "proyectos:\nfuentes_manuales:\n  horas_sin_kimai:\n"
+        '    - persona: "Gabriel Denis"\n'
+        '      planilla: "gabriel-denis.xlsx"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ErrorMapeo, match="restar_a"):
+        Mapeo.cargar(ruta)
+
+
+def test_las_descripciones_aparte_se_declaran_con_persona_y_planilla(tmp_path):
+    ruta = tmp_path / "m.yaml"
+    ruta.write_text(
+        "proyectos:\nfuentes_manuales:\n  descripciones:\n"
+        '    - persona: "Alexis Carnero"\n'
+        '      planilla: "alexis-carnero.xlsx"\n',
+        encoding="utf-8",
+    )
+    (entrada,) = Mapeo.cargar(ruta).fuentes_manuales.descripciones
+    assert entrada.persona == "Alexis Carnero"
+    assert entrada.planilla == "alexis-carnero.xlsx"
+
+
+def test_el_mapeo_del_repo_declara_las_horas_de_quien_no_tiene_usuario():
+    """Regresión: septiembre tiene que salir con el mecanismo ya funcionando."""
+    mapeo = Mapeo.cargar(RAIZ / "config" / "mapeo.yaml")
+    personas = [e.persona for e in mapeo.fuentes_manuales.horas_sin_kimai]
+    assert "Gabriel Denis" in personas

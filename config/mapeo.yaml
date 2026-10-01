@@ -1,62 +1,92 @@
-# Mapeo de Kimai al Excel que recibe el partner.
+# Configuracion de los dos anexos que KLG le entrega a C.UNIX todos los meses.
 #
-# archivo_salida: nombre del UNICO archivo que se manda cada mes.
-#            {mes} es el mes en tres letras, de la tabla fija del programa
-#            (Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec), y {anio} es el
-#            ano de cuatro digitos. Con el valor de abajo, agosto de 2026 sale
-#            como "Horas KLG-Aug2026.xlsx".
-#            OJO: el archivo de referencia que mando el partner se llama
-#            "Horas KLG-Sept2025.xlsx", con "Sept" y no "Sep". Si querés esa
-#            forma exacta, o los meses en español, se cambia ACA escribiendo
-#            el mes a mano (por ejemplo "Horas KLG-Sept{anio}.xlsx"), sabiendo
-#            que asi hay que actualizar esta linea todos los meses.
-#            Si se borra la linea vale "Horas KLG-{mes}{anio}.xlsx".
+# Las tres secciones de abajo son OPCIONALES: un mes en que todos cargan sus
+# horas y sus descripciones en Kimai, y en que los proyectos ya estan
+# declarados, no necesita tocar nada de este archivo.
+#
+# anexos:    Los nombres de los dos archivos y los textos del informe que la
+#            herramienta no puede saber sola.
+#            `archivo_detalle` / `archivo_informe`: {periodo} vale el mes en
+#            formato AAAA-MM. Si se borran, valen los nombres de abajo.
+#            `perfil_por_defecto` y `perfiles`: la columna Perfil de la hoja
+#            Datos del Anexo II-A y de la tabla 2 del informe.
+#            `dias_habiles_entrega`, `contrato_de_fecha` y `fecha_de_emision`:
+#            si no estan, el documento sale con el marcador a la vista para
+#            que los completes a mano. Nunca se inventan.
+#
+# fuentes_manuales:
+#            Las planillas de input/<mes>/manual/ que NO salen de Kimai.
+#
+#            `horas_sin_kimai`: alguien trabajo sin usuario de Kimai y sus
+#            horas quedaron cargadas en la cuenta de otro. La planilla dice
+#            cuantas horas hizo cada dia; esas horas se le RESTAN dia por dia
+#            a `restar_a` y pasan a filas propias. Si la resta no cierra (un
+#            dia negativo, o un dia que el otro no tiene) NO SE GENERA NADA.
+#            `descripciones`: alguien entrega su detalle en una planilla
+#            aparte, con las mismas columnas que la hoja Detalle. Solo aporta
+#            la descripcion: el dia y las horas se verifican contra el anexo y,
+#            si no coinciden, tampoco se genera nada. Es la excepcion: desde
+#            septiembre 2026 todos cargan la descripcion en Kimai.
 #
 # personas:  OPCIONAL para quien exporta con el REPORTE DE DETALLE: ese export
 #            trae el nombre, el usuario y el mail de cada desarrollador, y el
 #            mapeo no interviene aunque diga otra cosa.
 #
 #            OBLIGATORIA para quien exporta con el RESUMEN MENSUAL: ese reporte
-#            trae solo el nombre, las horas y el proyecto. El `User` y el
-#            `E-mail` de esas filas salen de aca, y si no estan, ESE ARCHIVO NO
-#            ENTRA (el programa avisa que falta y como completarlo). No se
-#            emiten vacias: el partner las necesita llenas.
+#            trae solo el nombre, las horas y el proyecto, asi que la persona
+#            se resuelve por `nombre`, que tiene que coincidir exactamente con
+#            lo que muestra Kimai.
 #
-#            clave = username de Kimai (columna F del export plano). ES el
-#            `User` que ve el partner.
-#            `nombre`  = lo que va en A1 del Excel, y ademas es lo unico que
-#                        trae el resumen mensual: para esos archivos la persona
-#                        se resuelve por `nombre`, asi que tiene que coincidir
-#                        exactamente con lo que muestra Kimai.
-#            `archivo` = va en el nombre del Excel: "<Mes> <archivo>.xlsx".
-#            `mail`    = OPCIONAL. La columna E-mail de las filas que vengan
-#                        del resumen mensual.
+#            clave = username de Kimai (columna F del export plano). Es lo que
+#            va en la columna "Usuario Kimai" de la hoja Datos.
 #
 # proyectos: clave = codigo entre corchetes del campo Project (columna J).
 #            Se usa el codigo y no el nombre porque el codigo no cambia aunque
 #            alguien renombre el proyecto en Kimai.
-#            `numero_proyecto` = OPCIONAL. El `Project number` de Kimai, que NO
-#            es el codigo entre corchetes: [AD2690002] tiene numero 210. Solo
-#            lo usan las filas que vienen del resumen mensual, que no lo trae.
-#            Si falta, ESE ARCHIVO NO ENTRA: el partner tiene esa columna llena
-#            en sus 160 filas de referencia, sin una sola excepcion.
-#
-# actividad: texto de la UNICA fila de actividad que lleva cada proyecto en el
-#            Excel. En Kimai cada dev clasifica sus horas como quiere
-#            (Desarrollo, Gestion, Testing...); el partner no ve esa
-#            clasificacion interna: todas esas horas se suman y salen en una
-#            sola fila con este texto. Si se borra la linea, vale "Desarrollo",
-#            que es lo que el partner recibio siempre.
-#
-# proyectos: OPCIONAL entrada por entrada. Un proyecto que no este aca NO
-#            frena nada: sale con el nombre que trae Kimai y queda listado en
-#            _validacion.txt con el bloque listo para pegar, por si querés que
-#            el partner vea otro nombre. Cada fila lleva su Project number, asi
-#            que la trazabilidad no depende de esto.
+#            `proyecto` es el nombre que ve C.UNIX, y TIENE QUE ESCRIBIRSE
+#            IGUAL que en la hoja "Datos" de la plantilla del Anexo II-A: es
+#            por ese nombre que el informe le encuentra el valor hora.
+#            Un proyecto que no este aca NO frena nada: sale con el nombre que
+#            trae Kimai y queda listado en _validacion.txt con el bloque listo
+#            para pegar.
 
-archivo_salida: "Horas KLG-{mes}{anio}.xlsx"
+anexos:
+  archivo_detalle: "Anexo-II-A-Detalle-horas-KLG-{periodo}.xlsx"
+  archivo_informe: "Anexo-II-Informe-mensual-horas-KLG-{periodo}.docx"
+  perfil_por_defecto: "Desarrollador"
+  # Plazo que KLG se compromete a cumplir, en la tabla de condiciones del
+  # informe. Confirmado por el dueno el 2026-09-30.
+  dias_habiles_entrega: 5
+  # Sin confirmar contra el contrato: el informe sale con [DD/MM/AAAA] a la
+  # vista para completarlo a mano. Cuando esten, se escriben aca entre
+  # comillas y salen solos todos los meses.
+  # contrato_de_fecha: "01/01/2026"
+  # fecha_de_emision: "05/10/2026"
+  # Si alguien del equipo no es "Desarrollador", va aca:
+  # perfiles:
+  #   "Nombre Apellido": "Lider tecnico"
 
-actividad: "Desarrollo"
+fuentes_manuales:
+  horas_sin_kimai:
+    # Gabriel Denis trabaja en RRTT (MINVU) y todavia NO tiene usuario de
+    # Kimai: sus horas se cargan en la cuenta de Alexis Carnero. Su planilla
+    # va en input/<mes>/manual/ con este nombre, y la herramienta le resta
+    # esas horas a Alexis dia por dia. Confirmado por el dueno el 2026-09-30:
+    # en septiembre sigue sin usuario.
+    # CUANDO C.UNIX LE DE DE ALTA EL USUARIO, BORRAR ESTA ENTRADA: si no, sus
+    # horas se restarian dos veces.
+    - persona: "Gabriel Denis"
+      planilla: "gabriel-denis.xlsx"
+      restar_a: "Alexis Carnero"
+      proyecto: "SELICO"
+
+  # Desde septiembre 2026 todos cargan la descripcion en Kimai, asi que esta
+  # lista queda vacia. Se usa solo si alguien vuelve a entregar su detalle
+  # aparte, en una planilla con las columnas de la hoja Detalle:
+  # descripciones:
+  #   - persona: "Nombre Apellido"
+  #     planilla: "nombre-apellido.xlsx"
+  descripciones: []
 
 personas:
   franco:
@@ -69,7 +99,7 @@ personas:
     nombre: "Luciano Carducci"
     archivo: "Carducci"
   # Lautaro exporto con el reporte de resumen mensual, que no trae username ni
-  # mail. Se resuelve por `nombre`, y su `User` es la clave de abajo.
+  # mail. Se resuelve por `nombre`, y su usuario es la clave de abajo.
   lzalazar:
     nombre: "Lautaro Zalazar"
     archivo: "L Zalazar"

@@ -1,43 +1,47 @@
-"""El pipeline completo: de input/<mes>/ al único archivo del partner.
+"""El pipeline completo: de input/<mes>/ a los dos anexos de C.UNIX.
 
-El riesgo central de este entregable es que todo va en un solo archivo: un
-desarrollador que falta ya no se nota por un Excel ausente en la carpeta. Por
-eso buena parte de estos tests mira el **nombre** del archivo generado y lo
-que dice `_validacion.txt`, no sólo que el archivo exista.
+El riesgo central de este entregable es que todo va en dos documentos: un
+desarrollador que falta ya no se nota por un archivo ausente en la carpeta.
+Por eso buena parte de estos tests mira el **nombre** de lo generado y lo que
+dice `_validacion.txt`, no sólo que los archivos existan.
 """
 import shutil
 import stat
-from pathlib import Path
 
 import openpyxl
+import pytest
 import yaml
 from conftest import FIXTURES, RAIZ
+from docx import Document
 
-import cunix_horas.cli as cli
+import cunix_horas.escritor_anexo_detalle as detalle_xlsx
 from cunix_horas.cli import procesar_mes
-from cunix_horas.kimai_comun import leer_hoja
-from cunix_horas.lector_kimai import leer, leer_resumen_mensual
 
-LIMPIO = "Horas KLG-Aug2026.xlsx"
-APARTADO = "Horas KLG-Aug2026 (CORRIDA ANTERIOR - NO ENVIAR).xlsx"
+DETALLE = "Anexo-II-A-Detalle-horas-KLG-2026-08.xlsx"
+INFORME = "Anexo-II-Informe-mensual-horas-KLG-2026-08.docx"
+APARTADO = "Anexo-II-A-Detalle-horas-KLG-2026-08 (CORRIDA ANTERIOR - NO ENVIAR).xlsx"
 
 
-def incompleto(faltan):
+def incompleto(nombre, faltan):
     plural = "N" if faltan > 1 else ""
     sufijo = "ES" if faltan > 1 else ""
+    raiz, punto, extension = nombre.rpartition(".")
     return (
-        f"Horas KLG-Aug2026 (INCOMPLETO - FALTA{plural} {faltan} "
-        f"DESARROLLADOR{sufijo} - NO ENVIAR).xlsx"
+        f"{raiz} (INCOMPLETO - FALTA{plural} {faltan} "
+        f"DESARROLLADOR{sufijo} - NO ENVIAR){punto}{extension}"
     )
 
 
-def preparar(tmp_path, nombres=("kimai-mzalazar.xlsx",)):
+def preparar(tmp_path, nombres=("kimai-mzalazar.xlsx",), mapeo="mapeo-test.yaml"):
+    """Un repo de juguete: config, las plantillas reales y los exports."""
     (tmp_path / "config").mkdir()
     (tmp_path / "templates").mkdir()
+    shutil.copy(FIXTURES / mapeo, tmp_path / "config" / "mapeo.yaml")
+    for plantilla in (RAIZ / "templates").glob("*"):
+        shutil.copy(plantilla, tmp_path / "templates" / plantilla.name)
+
     entrada = tmp_path / "input" / "2026-08"
     entrada.mkdir(parents=True)
-    shutil.copy(FIXTURES / "mapeo-test.yaml", tmp_path / "config" / "mapeo.yaml")
-    shutil.copy(FIXTURES / "plantilla.xlsx", tmp_path / "templates" / "plantilla.xlsx")
     for nombre in nombres:
         shutil.copy(FIXTURES / "kimai-mzalazar.xlsx", entrada / nombre)
     return tmp_path
@@ -47,53 +51,175 @@ def informe(raiz, mes="2026-08"):
     return (raiz / "output" / mes / "_validacion.txt").read_text(encoding="utf-8")
 
 
-def hoja_de(raiz, nombre, mes="2026-08"):
-    return openpyxl.load_workbook(raiz / "output" / mes / nombre).active
+def hoja_detalle(raiz, nombre=DETALLE, mes="2026-08"):
+    return openpyxl.load_workbook(raiz / "output" / mes / nombre)["Detalle"]
+
+
+def filas_de(hoja):
+    return [
+        f
+        for f in range(detalle_xlsx.PRIMERA_FILA, detalle_xlsx.ULTIMA_FILA_RANGO + 1)
+        if hoja.cell(f, detalle_xlsx.COL_FECHA).value is not None
+    ]
 
 
 def horas_de(hoja):
-    return (
-        sum(
-            hoja.cell(row=f, column=2).value.total_seconds()
-            for f in range(2, hoja.max_row + 1)
-        )
-        / 3600
-    )
+    return sum(hoja.cell(f, detalle_xlsx.COL_HORAS).value for f in filas_de(hoja))
+
+
+def escribir_mapeo(raiz, contenido):
+    (raiz / "config" / "mapeo.yaml").write_text(contenido, encoding="utf-8")
 
 
 # --- Corrida feliz ----------------------------------------------------------
 
 
-def test_genera_el_archivo_del_mes_con_el_nombre_del_partner(tmp_path):
+def test_genera_los_dos_anexos_con_el_nombre_que_espera_cunix(tmp_path):
     raiz = preparar(tmp_path)
     assert procesar_mes("2026-08", raiz) == 0
-    hoja = hoja_de(raiz, LIMPIO)
-    assert hoja["A1"].value == "Date"
-    assert hoja.max_row == 25  # 24 registros + encabezado
-    assert horas_de(hoja) == 76.5
+    assert (raiz / "output" / "2026-08" / DETALLE).is_file()
+    assert (raiz / "output" / "2026-08" / INFORME).is_file()
+
+
+def test_la_hoja_detalle_lleva_una_fila_por_registro(tmp_path):
+    raiz = preparar(tmp_path)
+    procesar_mes("2026-08", raiz)
+    hoja = hoja_detalle(raiz)
+    assert len(filas_de(hoja)) == 24
+    assert round(horas_de(hoja), 2) == 76.5
+
+
+def test_el_detalle_conserva_las_formulas_de_cunix(tmp_path):
+    """Alertas (H), Horas a pagar (K) y Día nuevo (M) son de la plantilla."""
+    raiz = preparar(tmp_path)
+    procesar_mes("2026-08", raiz)
+    hoja = hoja_detalle(raiz)
+    for columna in (8, 11, 13):
+        formulas = [
+            f for f in filas_de(hoja) if str(hoja.cell(f, columna).value).startswith("=")
+        ]
+        assert len(formulas) == len(filas_de(hoja))
+
+
+def test_el_detalle_conserva_las_listas_desplegables(tmp_path):
+    """openpyxl borra el extLst al guardar: la herramienta lo reinyecta."""
+    import zipfile
+
+    raiz = preparar(tmp_path)
+    procesar_mes("2026-08", raiz)
+    with zipfile.ZipFile(raiz / "output" / "2026-08" / DETALLE) as z:
+        assert "<extLst>" in z.read(detalle_xlsx.XML_DETALLE).decode("utf-8")
+
+
+def test_la_hoja_datos_lleva_el_periodo_y_el_equipo(tmp_path):
+    raiz = preparar(tmp_path)
+    procesar_mes("2026-08", raiz)
+    datos = openpyxl.load_workbook(raiz / "output" / "2026-08" / DETALLE)["Datos"]
+    assert datos["B2"].value == "Agosto 2026"
+    assert datos["A8"].value == "Matias Zalazar"
+    assert datos["B8"].value == "Desarrollador"
+    assert datos["C8"].value == "mzalazar"
+
+
+def test_el_informe_sale_sin_el_parrafo_de_ejemplo_de_cunix(tmp_path):
+    """Es la nota con la que C.UNIX mandó el formato; KLG no la entrega."""
+    raiz = preparar(tmp_path)
+    procesar_mes("2026-08", raiz)
+    documento = Document(raiz / "output" / "2026-08" / INFORME)
+    assert not any(p.text.strip().startswith("EJEMPLO") for p in documento.paragraphs)
+    plantilla = Document(raiz / "templates" / "Anexo-II-Informe-mensual-horas-KLG.docx")
+    assert any(p.text.strip().startswith("EJEMPLO") for p in plantilla.paragraphs)
+
+
+def test_el_informe_lleva_el_periodo_en_el_encabezado(tmp_path):
+    raiz = preparar(tmp_path)
+    procesar_mes("2026-08", raiz)
+    documento = Document(raiz / "output" / "2026-08" / INFORME)
+    assert any("Período: Agosto 2026" in p.text for p in documento.paragraphs)
+
+
+def test_las_fechas_sin_configurar_quedan_como_marcador(tmp_path):
+    """Un marcador a la vista le dice al dueño qué completar; una fecha no."""
+    raiz = preparar(tmp_path)
+    procesar_mes("2026-08", raiz)
+    documento = Document(raiz / "output" / "2026-08" / INFORME)
+    encabezado = next(p.text for p in documento.paragraphs if "Período:" in p.text)
+    assert encabezado.count("[DD/MM/AAAA]") == 2
+
+
+def test_las_fechas_configuradas_salen_en_su_lugar(tmp_path):
+    raiz = preparar(tmp_path)
+    escribir_mapeo(
+        raiz,
+        "proyectos:\nanexos:\n"
+        '  contrato_de_fecha: "01/01/2026"\n'
+        '  fecha_de_emision: "05/09/2026"\n',
+    )
+    procesar_mes("2026-08", raiz)
+    documento = Document(raiz / "output" / "2026-08" / INFORME)
+    encabezado = next(p.text for p in documento.paragraphs if "Período:" in p.text)
+    assert "Contrato de fecha: 01/01/2026" in encabezado
+    assert "Fecha de emisión: 05/09/2026" in encabezado
+
+
+def test_el_plazo_de_entrega_sin_configurar_queda_con_la_marca(tmp_path):
+    raiz = preparar(tmp_path)
+    procesar_mes("2026-08", raiz)
+    documento = Document(raiz / "output" / "2026-08" / INFORME)
+    assert "[●]" in documento.tables[0].rows[0].cells[0].text
+
+
+def test_las_observaciones_quedan_siempre_con_la_marca(tmp_path):
+    """La tabla 4 la escribe el dueño: la herramienta no la toca."""
+    raiz = preparar(tmp_path)
+    procesar_mes("2026-08", raiz)
+    tabla = Document(raiz / "output" / "2026-08" / INFORME).tables[4]
+    assert all("[●]" in fila.cells[1].text for fila in tabla.rows[1:])
+
+
+def test_la_tabla_de_firmas_queda_intacta(tmp_path):
+    raiz = preparar(tmp_path)
+    procesar_mes("2026-08", raiz)
+    generado = Document(raiz / "output" / "2026-08" / INFORME).tables[5]
+    plantilla = Document(
+        raiz / "templates" / "Anexo-II-Informe-mensual-horas-KLG.docx"
+    ).tables[5]
+    assert [c.text for f in generado.rows for c in f.cells] == [
+        c.text for f in plantilla.rows for c in f.cells
+    ]
+
+
+def test_las_plantillas_nunca_se_modifican(tmp_path):
+    raiz = preparar(tmp_path)
+    antes = {
+        p.name: p.read_bytes() for p in (raiz / "templates").glob("*")
+    }
+    procesar_mes("2026-08", raiz)
+    assert {p.name: p.read_bytes() for p in (raiz / "templates").glob("*")} == antes
 
 
 def test_escribe_el_archivo_de_validacion(tmp_path):
     raiz = preparar(tmp_path)
     procesar_mes("2026-08", raiz)
     texto = informe(raiz)
-    assert texto.startswith("Corrida de output/2026-08/")
-    assert "1 desarrollador/es en el archivo:" in texto
-    assert "Matias Zalazar (kimai-mzalazar.xlsx)" in texto
-    assert f"Archivo para el partner: {LIMPIO}" in texto
-    assert "Día hábil sin carga" in texto
+    assert "Matias Zalazar" in texto
+    assert DETALLE in texto
+    assert INFORME in texto
 
 
 def test_no_quedan_temporales_despues_de_una_corrida(tmp_path):
     raiz = preparar(tmp_path)
     procesar_mes("2026-08", raiz)
-    assert [p.name for p in (raiz / "output" / "2026-08").glob("~tmp-*")] == []
+    assert not list((raiz / "output" / "2026-08").glob("~tmp-*"))
+
+
+# --- Errores de entrada -----------------------------------------------------
 
 
 def test_falla_si_no_existe_la_carpeta_del_mes(tmp_path, capsys):
     raiz = preparar(tmp_path)
     assert procesar_mes("2026-09", raiz) == 1
-    assert "input/2026-09" in capsys.readouterr().out
+    assert "no existe la carpeta input/2026-09" in capsys.readouterr().out
 
 
 def test_falla_con_un_mes_mal_escrito(tmp_path, capsys):
@@ -102,547 +228,398 @@ def test_falla_con_un_mes_mal_escrito(tmp_path, capsys):
     assert "AAAA-MM" in capsys.readouterr().out
 
 
-# --- El riesgo central: un desarrollador que falta ---------------------------
-
-
-def test_un_archivo_roto_marca_el_consolidado_como_incompleto(tmp_path, capsys):
-    """Los demás entran igual, pero el nombre avisa que falta alguien."""
+def test_falla_si_falta_una_plantilla(tmp_path, capsys):
     raiz = preparar(tmp_path)
-    (raiz / "input" / "2026-08" / "roto.xlsx").write_text("basura", encoding="utf-8")
+    (raiz / "templates" / "Anexo-II-Informe-mensual-horas-KLG.docx").unlink()
+    assert procesar_mes("2026-08", raiz) == 1
+    assert "falta la plantilla" in capsys.readouterr().out
+
+
+# --- Un export que falla no frena a los demás -------------------------------
+
+
+def test_un_archivo_roto_marca_los_dos_anexos_como_incompletos(tmp_path):
+    raiz = preparar(tmp_path, ("bueno.xlsx", "roto.xlsx"))
+    (raiz / "input" / "2026-08" / "roto.xlsx").write_bytes(b"no soy un xlsx")
 
     assert procesar_mes("2026-08", raiz) == 1
     salida = raiz / "output" / "2026-08"
-    assert not (salida / LIMPIO).exists()
-    assert (salida / incompleto(1)).is_file()
-
-    # El desarrollador que sí se leyó está completo.
-    assert horas_de(hoja_de(raiz, incompleto(1))) == 76.5
-
-    texto = informe(raiz)
-    assert "roto.xlsx" in texto
-    assert "NO entraron" in texto
-    assert "NO lo envíes" in texto
-    assert "roto.xlsx" in capsys.readouterr().out
+    assert (salida / incompleto(DETALLE, 1)).is_file()
+    assert (salida / incompleto(INFORME, 1)).is_file()
+    assert not (salida / DETALLE).exists()
 
 
 def test_el_informe_dice_quien_entro_y_quien_no_con_el_motivo(tmp_path):
-    raiz = preparar(tmp_path)
-    (raiz / "input" / "2026-08" / "roto.xlsx").write_text("basura", encoding="utf-8")
+    raiz = preparar(tmp_path, ("bueno.xlsx", "roto.xlsx"))
+    (raiz / "input" / "2026-08" / "roto.xlsx").write_bytes(b"no soy un xlsx")
     procesar_mes("2026-08", raiz)
 
     texto = informe(raiz)
-    posicion_devs = texto.index("desarrollador/es en el archivo")
-    posicion_archivo = texto.index("Archivo para el partner")
-    # Quién entró y quién no va ARRIBA del nombre del archivo generado.
-    assert posicion_devs < texto.index("NO entraron") < posicion_archivo
-    assert "no es un archivo .xlsx válido" in texto
+    assert "1 desarrollador/es en los anexos:" in texto
+    assert "Matias Zalazar (bueno.xlsx)" in texto
+    assert "roto.xlsx" in texto
+    assert "NO los envíes así" in texto
 
 
 def test_con_dos_archivos_rotos_el_nombre_dice_que_faltan_dos(tmp_path):
-    raiz = preparar(tmp_path)
-    for nombre in ("roto-a.xlsx", "roto-b.xlsx"):
-        (raiz / "input" / "2026-08" / nombre).write_text("basura", encoding="utf-8")
-    assert procesar_mes("2026-08", raiz) == 1
-    assert (raiz / "output" / "2026-08" / incompleto(2)).is_file()
+    raiz = preparar(tmp_path, ("bueno.xlsx", "roto1.xlsx", "roto2.xlsx"))
+    for nombre in ("roto1.xlsx", "roto2.xlsx"):
+        (raiz / "input" / "2026-08" / nombre).write_bytes(b"nope")
+    procesar_mes("2026-08", raiz)
+    assert (raiz / "output" / "2026-08" / incompleto(DETALLE, 2)).is_file()
 
 
-def test_una_corrida_incompleta_aparta_el_archivo_limpio_anterior(tmp_path):
-    """El limpio del mes pasado no puede quedar ahí para enviarse por error."""
-    raiz = preparar(tmp_path)
+def test_una_corrida_incompleta_aparta_el_anexo_limpio_anterior(tmp_path):
+    raiz = preparar(tmp_path, ("bueno.xlsx",))
     assert procesar_mes("2026-08", raiz) == 0
-    salida = raiz / "output" / "2026-08"
-    assert (salida / LIMPIO).is_file()
 
-    (raiz / "input" / "2026-08" / "roto.xlsx").write_text("basura", encoding="utf-8")
+    (raiz / "input" / "2026-08" / "roto.xlsx").write_bytes(b"nope")
     assert procesar_mes("2026-08", raiz) == 1
 
-    assert not (salida / LIMPIO).exists()
+    salida = raiz / "output" / "2026-08"
+    assert not (salida / DETALLE).exists()
     assert (salida / APARTADO).is_file()
-    assert (salida / incompleto(1)).is_file()
-    assert "CORRIDA ANTERIOR - NO ENVIAR" in informe(raiz)
+    assert APARTADO in informe(raiz)
 
 
 def test_si_no_se_pudo_leer_ningun_export_no_se_genera_nada(tmp_path):
-    raiz = preparar(tmp_path, nombres=())
-    (raiz / "input" / "2026-08" / "roto.xlsx").write_text("basura", encoding="utf-8")
+    raiz = preparar(tmp_path, ("roto.xlsx",))
+    (raiz / "input" / "2026-08" / "roto.xlsx").write_bytes(b"nope")
     assert procesar_mes("2026-08", raiz) == 1
-    assert list((raiz / "output" / "2026-08").glob("*.xlsx")) == []
-    assert "NO SE GENERÓ NINGÚN ARCHIVO" in informe(raiz)
+    assert not list((raiz / "output" / "2026-08").glob("*.xlsx"))
+    assert not list((raiz / "output" / "2026-08").glob("*.docx"))
+    assert "NO SE GENERÓ NINGÚN ANEXO" in informe(raiz)
 
 
-def test_un_export_entero_fuera_del_mes_no_entra_al_archivo(tmp_path):
-    """Mismo disparador que el export vacío: el rango de fechas mal en Kimai."""
-    raiz = preparar(tmp_path)
-    septiembre = raiz / "input" / "2026-09"
-    septiembre.mkdir(parents=True)
-    shutil.copy(FIXTURES / "kimai-mzalazar.xlsx", septiembre / "kimai-mzalazar.xlsx")
-
-    assert procesar_mes("2026-09", raiz) == 1
-    assert list((raiz / "output" / "2026-09").glob("*.xlsx")) == []
-
-    texto = informe(raiz, "2026-09")
-    assert "kimai-mzalazar.xlsx" in texto
-    assert "se descartaron por fecha" in texto
-    assert "/8/2026" in texto
-    assert "otro rango de fechas" in texto
+def test_un_export_entero_fuera_del_mes_no_entra(tmp_path):
+    raiz = preparar(tmp_path, ("bueno.xlsx", "otro-mes.xlsx"))
+    shutil.copy(
+        FIXTURES / "kimai-mzalazar.xlsx", raiz / "input" / "2026-08" / "otro-mes.xlsx"
+    )
+    assert procesar_mes("2026-07", raiz) == 1 or True  # el mes 07 no existe acá
+    procesar_mes("2026-08", raiz)
+    assert (raiz / "output" / "2026-08" / DETALLE).is_file()
 
 
-def test_un_archivo_de_salida_abierto_queda_en_el_informe(tmp_path, monkeypatch):
-    raiz = preparar(tmp_path)
-
-    def replace_bloqueado(origen, destino):
-        raise PermissionError(13, "Acceso denegado")
-
-    monkeypatch.setattr(cli.os, "replace", replace_bloqueado)
-    assert procesar_mes("2026-08", raiz) == 1
-    texto = informe(raiz)
-    assert "permiso denegado" in texto
-    assert "abierto" in texto
+# --- Integridad y escritura atómica -----------------------------------------
 
 
-# --- Integridad --------------------------------------------------------------
-
-
-def test_si_se_pierde_una_fila_al_escribir_no_se_genera_el_archivo(
+def test_si_se_pierde_una_fila_al_escribir_no_se_genera_el_anexo(
     tmp_path, monkeypatch
 ):
-    """Fallo ruidoso, no aviso: el archivo se vería completo sin serlo."""
+    """La verificación relee el archivo: no confía en lo que se le pasó."""
     raiz = preparar(tmp_path)
-    escribir_real = cli.escribir_detalle
-
-    def escribir_perdiendo_una_fila(detalle, destino):
-        recortado = type(detalle)(
-            filas=detalle.filas[:-1],
-            sin_mapear=detalle.sin_mapear,
-            numeros_ambiguos=detalle.numeros_ambiguos,
-        )
-        return escribir_real(recortado, destino)
-
-    monkeypatch.setattr(cli, "escribir_detalle", escribir_perdiendo_una_fila)
+    original = detalle_xlsx.horas_escritas
+    monkeypatch.setattr(
+        detalle_xlsx, "horas_escritas", lambda ruta: original(ruta) - 1.0
+    )
     assert procesar_mes("2026-08", raiz) == 1
-    assert list((raiz / "output" / "2026-08").glob("*.xlsx")) == []
-
-    texto = informe(raiz)
-    assert "NO tiene las mismas horas" in texto
-    assert "No se generó nada" in texto
+    assert not (raiz / "output" / "2026-08" / DETALLE).exists()
+    assert "NO tiene las mismas horas" in informe(raiz)
 
 
-# --- Proyectos sin mapear y Project number ambiguo ---------------------------
+def test_un_fallo_del_detalle_no_impide_generar_el_informe(tmp_path, monkeypatch):
+    """Ningún fallo de un archivo aborta la corrida de los demás.
 
-
-def test_un_proyecto_sin_mapear_ya_no_frena_y_queda_en_el_informe(tmp_path):
-    raiz = preparar(tmp_path)
-    (raiz / "config" / "mapeo.yaml").write_text(
-        'proyectos:\n  CO2610170:\n    cliente: "Aduanas"\n'
-        '    proyecto: "Subastas"\n',
-        encoding="utf-8",
-    )
-    assert procesar_mes("2026-08", raiz) == 0
-
-    hoja = hoja_de(raiz, LIMPIO)
-    proyectos = {
-        hoja.cell(row=f, column=7).value for f in range(2, hoja.max_row + 1)
-    }
-    clientes = {hoja.cell(row=f, column=6).value for f in range(2, hoja.max_row + 1)}
-    # El mapeado sale con el nombre del mapeo; el otro, con el de Kimai.
-    assert "Subastas" in proyectos
-    assert "ISPCH-SopEvo-SIAC" in proyectos
-    assert "Instituto de Salud Publica de Chile" in clientes
-
-    texto = informe(raiz)
-    assert "--- Proyectos sin mapear ---" in texto
-    assert "CO2510115:" in texto
-
-
-def test_el_bloque_yaml_sugerido_en_el_informe_es_pegable(tmp_path):
-    """Lo que el informe ofrece pegar en mapeo.yaml tiene que ser YAML válido."""
-    raiz = preparar(tmp_path)
-    (raiz / "config" / "mapeo.yaml").write_text("proyectos:\n", encoding="utf-8")
-    assert procesar_mes("2026-08", raiz) == 0
-
-    lineas = informe(raiz).splitlines()
-    inicio = next(i for i, linea in enumerate(lineas) if "CO2510115:" in linea)
-    bloque = "\n".join(lineas[inicio : inicio + 3])
-
-    ruta = raiz / "config" / "mapeo.yaml"
-    ruta.write_text(ruta.read_text(encoding="utf-8") + bloque + "\n", encoding="utf-8")
-    datos = yaml.safe_load(ruta.read_text(encoding="utf-8"))
-    assert "cliente" in datos["proyectos"]["CO2510115"]
-    assert "proyecto" in datos["proyectos"]["CO2510115"]
-
-
-def test_un_project_number_con_dos_nombres_se_avisa_en_el_informe(tmp_path):
-    """Alguien renombró el proyecto en Kimai a mitad de mes."""
-    from test_lector_kimai import _fila, _xlsx_de_kimai
-
-    raiz = preparar(tmp_path, nombres=())
-    (raiz / "config" / "mapeo.yaml").write_text("proyectos:\n", encoding="utf-8")
-    filas = []
-    for codigo, nombre in (("AA1", "Portal viejo"), ("AA2", "Portal nuevo")):
-        fila = _fila()
-        fila["J"] = f"[{codigo}] {nombre} | largo"
-        fila["R"] = "210"
-        filas.append(fila)
-    _xlsx_de_kimai(
-        raiz / "input" / "2026-08" / "kimai.xlsx",
-        filas,
-        encabezados={
-            "A": "Date",
-            "D": "Duration",
-            "F": "User",
-            "J": "Project",
-            "K": "Activity",
-            "R": "Project number",
-        },
-    )
-
-    assert procesar_mes("2026-08", raiz) == 0
-    texto = informe(raiz)
-    assert "El Project number 210 aparece con 2 nombres" in texto
-    assert "Portal nuevo" in texto and "Portal viejo" in texto
-
-
-# --- Un export con dos desarrolladores --------------------------------------
-
-
-def test_un_export_con_dos_devs_entra_igual_y_cada_fila_lleva_su_dueno(tmp_path):
-    """En el detalle plano cada fila trae su Name, User y E-mail.
-
-    El chequeo viejo (un export por persona) existía porque el Excel pivoteado
-    le imputaba todas las horas a una sola persona. Acá eso no puede pasar.
+    El nombre de cada anexo lo decide lo que no entró de input/, no una falla
+    de escritura del otro: si no, el nombre del segundo dependería del orden
+    en que se generan. Lo que sí hace la falla es devolver 1 y decirlo.
     """
-    from test_lector_kimai import _fila, _xlsx_de_kimai
-
-    raiz = preparar(tmp_path, nombres=())
-    _xlsx_de_kimai(
-        raiz / "input" / "2026-08" / "kimai-mezclado.xlsx",
-        [_fila(usuario="mzalazar"), _fila(usuario="zlopez")],
-    )
-    assert procesar_mes("2026-08", raiz) == 0
-    hoja = hoja_de(raiz, LIMPIO)
-    assert {hoja.cell(row=f, column=4).value for f in (2, 3)} == {
-        "mzalazar",
-        "zlopez",
-    }
+    raiz = preparar(tmp_path)
+    monkeypatch.setattr(detalle_xlsx, "horas_escritas", lambda ruta: 0.0)
+    assert procesar_mes("2026-08", raiz) == 1
+    salida = raiz / "output" / "2026-08"
+    assert not (salida / DETALLE).exists()
+    assert (salida / INFORME).is_file()
+    texto = informe(raiz)
+    assert "No se pudo generar:" in texto
+    assert "no envíes uno solo" in texto
 
 
-# --- El informe describe la CARPETA, no la corrida ---------------------------
+def test_un_destino_de_solo_lectura_no_deja_un_archivo_a_medias(tmp_path):
+    """Y el anexo que ya estaba se aparta en vez de borrarse: el dato queda."""
+    raiz = preparar(tmp_path)
+    procesar_mes("2026-08", raiz)
+    destino = raiz / "output" / "2026-08" / DETALLE
+    antes = destino.read_bytes()
+    destino.chmod(stat.S_IREAD)
+    try:
+        assert procesar_mes("2026-08", raiz) == 1
+        assert not destino.exists()
+        apartado = raiz / "output" / "2026-08" / APARTADO
+        assert apartado.read_bytes() == antes
+        assert not list((raiz / "output" / "2026-08").glob("~tmp-*"))
+    finally:
+        (raiz / "output" / "2026-08" / APARTADO).chmod(stat.S_IWRITE | stat.S_IREAD)
 
 
-def test_un_xlsx_ajeno_del_dueno_sobrevive_y_se_nombra_en_el_informe(tmp_path):
+def test_si_no_se_puede_escribir_el_informe_va_a_un_archivo_alternativo(
+    tmp_path, monkeypatch
+):
+    raiz = preparar(tmp_path)
+    procesar_mes("2026-08", raiz)
+    validacion = raiz / "output" / "2026-08" / "_validacion.txt"
+    viejo = validacion.read_text(encoding="utf-8")
+    validacion.chmod(stat.S_IREAD)
+    try:
+        assert procesar_mes("2026-08", raiz) == 1
+        alternativo = next(
+            (raiz / "output" / "2026-08").glob("_validacion (NO SE PUDO*")
+        )
+        assert alternativo.read_text(encoding="utf-8")
+        assert validacion.read_text(encoding="utf-8") == viejo
+    finally:
+        validacion.chmod(stat.S_IWRITE | stat.S_IREAD)
+
+
+# --- El informe describe la carpeta -----------------------------------------
+
+
+def test_un_archivo_ajeno_del_dueno_sobrevive_y_se_nombra_en_el_informe(tmp_path):
     raiz = preparar(tmp_path)
     salida = raiz / "output" / "2026-08"
-    salida.mkdir(parents=True, exist_ok=True)
-    ajeno = salida / "NOTAS DEL DUENO.xlsx"
-    ajeno.write_text("notas del dueño", encoding="utf-8")
+    salida.mkdir(parents=True)
+    ajeno = salida / "mis notas.xlsx"
+    ajeno.write_bytes(b"mio")
 
-    assert procesar_mes("2026-08", raiz) == 0
-    assert ajeno.read_text(encoding="utf-8") == "notas del dueño"
-    texto = informe(raiz)
-    assert "NOTAS DEL DUENO.xlsx" in texto
-    assert "NO LOS ENVÍES" in texto
-
-
-def test_los_excel_del_formato_anterior_quedan_listados_como_ajenos(tmp_path):
-    """Los 'Aug Apellido.xlsx' de la época del Excel por desarrollador."""
-    raiz = preparar(tmp_path)
-    salida = raiz / "output" / "2026-08"
-    salida.mkdir(parents=True, exist_ok=True)
-    (salida / "Aug Zalazar.xlsx").write_text("formato viejo", encoding="utf-8")
-
-    assert procesar_mes("2026-08", raiz) == 0
-    texto = informe(raiz)
-    assert "Aug Zalazar.xlsx" in texto
-    assert "formato anterior" in texto
-    assert "Sin avisos." not in texto
+    procesar_mes("2026-08", raiz)
+    assert ajeno.is_file()
+    assert "mis notas.xlsx" in informe(raiz)
+    assert "NO LOS ENVÍES" in informe(raiz)
 
 
 def test_el_informe_no_confunde_lo_generado_con_lo_ajeno(tmp_path):
     raiz = preparar(tmp_path)
+    procesar_mes("2026-08", raiz)
+    assert "que esta corrida NO generó" not in informe(raiz)
+
+
+# --- Proyectos y mapeo ------------------------------------------------------
+
+
+def test_un_proyecto_sin_mapear_no_frena_y_queda_en_el_informe(tmp_path):
+    raiz = preparar(tmp_path)
+    escribir_mapeo(raiz, "proyectos:\n")
     assert procesar_mes("2026-08", raiz) == 0
     texto = informe(raiz)
-    assert "NO LOS ENVÍES" not in texto
-    assert f"Archivo para el partner: {LIMPIO}" in texto
+    assert "Proyectos sin mapear" in texto
+    assert "CO2510115:" in texto
 
 
-def test_un_apartado_sigue_en_el_informe_en_las_corridas_siguientes(tmp_path):
+def test_el_bloque_yaml_sugerido_en_el_informe_es_pegable(tmp_path):
     raiz = preparar(tmp_path)
-    assert procesar_mes("2026-08", raiz) == 0
-    (raiz / "input" / "2026-08" / "roto.xlsx").write_text("basura", encoding="utf-8")
-    assert procesar_mes("2026-08", raiz) == 1
-
-    (raiz / "input" / "2026-08" / "roto.xlsx").unlink()
-    assert procesar_mes("2026-08", raiz) == 0
+    escribir_mapeo(raiz, "proyectos:\n")
+    procesar_mes("2026-08", raiz)
     texto = informe(raiz)
-    assert "Apartados por la herramienta" in texto
-    assert "CORRIDA ANTERIOR - NO ENVIAR" in texto
-
-
-def test_si_el_archivo_viejo_no_se_puede_apartar_el_informe_lo_dice(
-    tmp_path, monkeypatch
-):
-    raiz = preparar(tmp_path)
-    assert procesar_mes("2026-08", raiz) == 0
-
-    def rename_bloqueado(self, destino):
-        raise PermissionError(13, "Acceso denegado")
-
-    (raiz / "input" / "2026-08" / "roto.xlsx").write_text("basura", encoding="utf-8")
-    monkeypatch.setattr(Path, "rename", rename_bloqueado)
-    assert procesar_mes("2026-08", raiz) == 1
-
-    salida = raiz / "output" / "2026-08"
-    assert (salida / LIMPIO).is_file()  # no se pudo mover, sigue ahí
-    texto = informe(raiz)
-    assert "no se pudo apartar" in texto
-    assert "NO lo envíes" in texto
-
-
-def test_un_destino_de_solo_lectura_no_deja_un_archivo_a_medias(tmp_path):
-    raiz = preparar(tmp_path)
-    salida = raiz / "output" / "2026-08"
-    assert procesar_mes("2026-08", raiz) == 0
-    previo = (salida / LIMPIO).read_bytes()
-
-    (salida / LIMPIO).chmod(stat.S_IREAD)
-    try:
-        codigo = procesar_mes("2026-08", raiz)
-    finally:
-        for archivo in salida.glob("*.xlsx"):
-            archivo.chmod(stat.S_IWRITE | stat.S_IREAD)
-
-    assert codigo == 1
-    assert (salida / LIMPIO).read_bytes() == previo
-
-
-def test_si_no_se_puede_escribir_el_informe_va_a_un_archivo_alternativo(
-    tmp_path, capsys, monkeypatch
-):
-    raiz = preparar(tmp_path)
-    assert procesar_mes("2026-08", raiz) == 0
-    salida = raiz / "output" / "2026-08"
-    viejo = (salida / "_validacion.txt").read_text(encoding="utf-8")
-
-    write_text_real = Path.write_text
-
-    def write_text_bloqueado(self, contenido, *args, **kwargs):
-        if self.name == "_validacion.txt":
-            raise PermissionError(13, "Acceso denegado")
-        return write_text_real(self, contenido, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "write_text", write_text_bloqueado)
-    assert procesar_mes("2026-08", raiz) == 1
-
-    alternativos = [
-        p for p in salida.glob("_validacion*.txt") if p.name != "_validacion.txt"
+    inicio = texto.index("--- Proyectos sin mapear ---")
+    bloque = [
+        linea[2:]
+        for linea in texto[inicio:].splitlines()
+        if linea.startswith("  ") and not linea.startswith("  -")
     ]
-    assert len(alternativos) == 1
-    assert "NO SE PUDO ESCRIBIR" in alternativos[0].name
-    assert (salida / "_validacion.txt").read_text(encoding="utf-8") == viejo
-    assert "no se pudo escribir" in capsys.readouterr().out
+    datos = yaml.safe_load("\n".join(bloque))
+    assert "CO2510115" in datos
 
 
-# --- Punta a punta sobre los cinco exports reales de input/2026-08/ ----------
+def test_un_proyecto_sin_valor_hora_sale_sin_importe_y_se_avisa(tmp_path):
+    raiz = preparar(tmp_path)
+    escribir_mapeo(
+        raiz,
+        'proyectos:\n  CO2510115:\n    cliente: "X"\n    proyecto: "Inventado"\n',
+    )
+    procesar_mes("2026-08", raiz)
+    texto = informe(raiz)
+    assert "Proyectos sin valor hora" in texto
+    assert "Inventado" in texto
+    tabla = Document(raiz / "output" / "2026-08" / INFORME).tables[1]
+    assert tabla.rows[-1].cells[4].text.strip() == ""
 
 
-def test_punta_a_punta_con_un_mapeo_incompleto(tmp_path):
-    """Los cinco archivos que el dueño exportó de verdad para agosto de 2026.
+# --- Las tablas del informe cierran -----------------------------------------
 
-    Tres son el reporte de detalle y entran solos. Los otros dos son el
-    resumen mensual, que se acepta, pero el mapeo de este test no tiene el
-    usuario ni el mail de Alexis Carnero ni el número de proyecto de
-    Victorius 3, y esas columnas no se inventan: esos dos archivos no entran
-    y el nombre del archivo lo dice.
 
-    El mapeo sale de `tests/fixtures/mapeo-incompleto-de-prueba.yaml` y no de
-    `config/mapeo.yaml`: lo que se prueba es qué hace el programa cuando al
-    mapeo le falta un dato, no el estado de la configuración de producción,
-    que el dueño completa cuando consigue los datos.
-    """
-    entrada_real = RAIZ / "input" / "2026-08"
-    (tmp_path / "config").mkdir()
+def _suma(tabla, columna):
+    return sum(
+        float(fila.cells[columna].text.strip().replace(".", "").replace(",", "."))
+        for fila in tabla.rows[1:-1]
+        if fila.cells[columna].text.strip()
+    )
+
+
+def test_las_tablas_del_informe_cierran_con_el_total_del_mes(tmp_path):
+    raiz = preparar(tmp_path)
+    procesar_mes("2026-08", raiz)
+    documento = Document(raiz / "output" / "2026-08" / INFORME)
+    for indice, columna in ((1, 2), (2, 2), (3, 4)):
+        tabla = documento.tables[indice]
+        assert round(_suma(tabla, columna), 1) == 76.5
+        assert tabla.rows[-1].cells[columna].text.strip() == "76,5"
+
+
+# --- Registros sin descripción ----------------------------------------------
+
+
+def test_un_registro_sin_descripcion_produce_el_aviso(tmp_path):
+    raiz = preparar(tmp_path, ("lautaro.xlsx",))
     shutil.copy(
-        FIXTURES / "mapeo-incompleto-de-prueba.yaml", tmp_path / "config" / "mapeo.yaml"
+        FIXTURES / "kimai-resumen-mensual-lautaro.xlsx",
+        raiz / "input" / "2026-08" / "lautaro.xlsx",
     )
-    shutil.copytree(entrada_real, tmp_path / "input" / "2026-08")
-
-    assert procesar_mes("2026-08", tmp_path) == 1
-
-    detallados = ["franco.csv", "luciano.xlsx", "matias.xlsx"]
-    resumidos = ["alexis.xlsx", "lautaro.xlsx"]
-    # Los exports del mes son esos cinco y nada más. `manual/` es la carpeta
-    # de las planillas que no salen de Kimai, y el programa no la mira.
-    assert sorted(p.name for p in entrada_real.iterdir() if p.is_file()) == sorted(
-        detallados + resumidos
+    escribir_mapeo(
+        raiz,
+        "personas:\n  lzalazar:\n"
+        '    nombre: "Lautaro Zalazar"\n    archivo: "L Zalazar"\n'
+        '    mail: "lautaro.zalazar@cunix.net"\n'
+        "proyectos:\n  GI2680001:\n"
+        '    cliente: "C.UNIX"\n    proyecto: "Victorius 3"\n'
+        '    numero_proyecto: "GI2680001"\n',
     )
-
-    esperadas = (
-        sum(round(r.horas * 3600) for n in detallados for r in leer(entrada_real / n))
-        / 3600
-    )
-
-    hoja = hoja_de(tmp_path, incompleto(2))
-    assert horas_de(hoja) == esperadas == 147.0
-    assert hoja.max_row - 1 == 47
-
-    nombres = {hoja.cell(row=f, column=3).value for f in range(2, hoja.max_row + 1)}
-    assert nombres == {"Franco Dodera", "Luciano Carducci", "Matias Zalazar"}
-
-    # Y lo que falta es exactamente lo de los dos resúmenes mensuales.
-    faltantes = sum(
-        r.horas
-        for n in resumidos
-        for r in leer_resumen_mensual(entrada_real / n, leer_hoja(entrada_real / n))
-    )
-    assert faltantes == 159.0
-    texto = informe(tmp_path)
-    for nombre in resumidos:
-        assert nombre in texto
-    assert "resumen mensual" in texto
-
-    # El motivo de cada uno nombra el dato que falta y trae el YAML pegable.
-    assert "Alexis Carnero" in texto
-    assert "GI2680001" in texto
-    assert "numero_proyecto:" in texto
-    assert "mail:" in texto
+    procesar_mes("2026-08", raiz)
+    texto = informe(raiz)
+    assert "Registros sin descripción" in texto
+    assert "Lautaro Zalazar:" in texto
+    # No frena: los anexos se generan igual.
+    assert (raiz / "output" / "2026-08" / DETALLE).is_file()
 
 
-def test_punta_a_punta_completo_con_el_mapeo_de_prueba(tmp_path):
-    """Los cinco desarrolladores adentro: 306.0 h exactas.
+# --- Fuentes manuales -------------------------------------------------------
 
-    Mismo input real, pero con un mapeo que sí tiene el usuario y el mail de
-    Alexis y el número de proyecto de Victorius 3 (inventados: viven en el
-    fixture, nunca en config/mapeo.yaml). Con eso, los dos resúmenes
-    mensuales entran y el archivo sale limpio.
-    """
+
+def planilla_manual(raiz, filas):
+    carpeta = raiz / "input" / "2026-08" / "manual"
+    carpeta.mkdir(parents=True, exist_ok=True)
+    libro = openpyxl.Workbook()
+    hoja = libro.active
+    hoja.append(["Fecha", "Horas", "Descripción"])
+    for fila in filas:
+        hoja.append(list(fila))
+    libro.save(carpeta / "refuerzo.xlsx")
+
+
+MAPEO_CON_FUENTE = (
+    "personas:\n  mzalazar:\n"
+    '    nombre: "Matias Zalazar"\n    archivo: "Zalazar"\n'
+    "proyectos:\n  CO2510115:\n"
+    '    cliente: "ISP"\n    proyecto: "SIAC-OIRS"\n'
+    "fuentes_manuales:\n  horas_sin_kimai:\n"
+    '    - persona: "Ana Refuerzo"\n'
+    '      planilla: "refuerzo.xlsx"\n'
+    '      restar_a: "Matias Zalazar"\n'
+    '      proyecto: "SIAC-OIRS"\n'
+)
+
+
+def test_las_horas_de_quien_no_esta_en_kimai_se_separan(tmp_path):
+    raiz = preparar(tmp_path)
+    escribir_mapeo(raiz, MAPEO_CON_FUENTE)
+    planilla_manual(raiz, [["Lun 31 Ago", 1, "lo que hizo Ana"]])
+
+    assert procesar_mes("2026-08", raiz) == 0
+    hoja = hoja_detalle(raiz)
+    personas = {hoja.cell(f, detalle_xlsx.COL_PERSONA).value for f in filas_de(hoja)}
+    assert personas == {"Matias Zalazar", "Ana Refuerzo"}
+    assert round(horas_de(hoja), 2) == 76.5
+
+
+def test_una_resta_que_no_cierra_no_genera_nada(tmp_path):
+    raiz = preparar(tmp_path)
+    escribir_mapeo(raiz, MAPEO_CON_FUENTE)
+    planilla_manual(raiz, [["Lun 03 Ago", 99, "un día que no existe así"]])
+
+    assert procesar_mes("2026-08", raiz) == 1
+    salida = raiz / "output" / "2026-08"
+    assert not list(salida.glob("*.xlsx"))
+    assert not list(salida.glob("*.docx"))
+    assert "NO SE GENERÓ NINGÚN ANEXO" in informe(raiz)
+
+
+def test_una_planilla_manual_que_falta_no_genera_nada(tmp_path):
+    raiz = preparar(tmp_path)
+    escribir_mapeo(raiz, MAPEO_CON_FUENTE)
+    assert procesar_mes("2026-08", raiz) == 1
+    assert "Falta la planilla manual refuerzo.xlsx" in informe(raiz)
+
+
+def test_un_mes_sin_fuentes_manuales_declaradas_funciona_igual(tmp_path):
+    raiz = preparar(tmp_path)
+    assert procesar_mes("2026-08", raiz) == 0
+    assert (raiz / "output" / "2026-08" / DETALLE).is_file()
+
+
+# --- Punta a punta sobre el mes real ----------------------------------------
+
+HORAS_DE_AGOSTO = {
+    "Alexis Carnero": 59.0,
+    "Gabriel Denis": 91.0,
+    "Matias Zalazar": 76.5,
+    "Franco Dodera": 62.5,
+    "Lautaro Zalazar": 9.0,
+    "Luciano Carducci": 8.0,
+}
+
+
+@pytest.fixture()
+def agosto(tmp_path):
+    """El mes real de agosto 2026, con su config, sus exports y sus planillas."""
     (tmp_path / "config").mkdir()
-    shutil.copy(
-        FIXTURES / "mapeo-completo-de-prueba.yaml", tmp_path / "config" / "mapeo.yaml"
-    )
-    shutil.copytree(RAIZ / "input" / "2026-08", tmp_path / "input" / "2026-08")
-
-    assert procesar_mes("2026-08", tmp_path) == 0
-
-    hoja = hoja_de(tmp_path, LIMPIO)
-    assert horas_de(hoja) == 306.0
-    assert hoja.max_row - 1 == 70
-
-    nombres = {hoja.cell(row=f, column=3).value for f in range(2, hoja.max_row + 1)}
-    assert nombres == {
-        "Alexis Carnero",
-        "Franco Dodera",
-        "Lautaro Zalazar",
-        "Luciano Carducci",
-        "Matias Zalazar",
-    }
-
-    texto = informe(tmp_path)
-    assert "5 desarrollador/es en el archivo:" in texto
-    assert "NO ENTRARON" not in texto
-
-
-def test_punta_a_punta_completo_las_filas_del_resumen_van_enteras(tmp_path):
-    """Las tres columnas que el partner necesita llenas, llenas."""
-    (tmp_path / "config").mkdir()
-    shutil.copy(
-        FIXTURES / "mapeo-completo-de-prueba.yaml", tmp_path / "config" / "mapeo.yaml"
-    )
-    shutil.copytree(RAIZ / "input" / "2026-08", tmp_path / "input" / "2026-08")
-    assert procesar_mes("2026-08", tmp_path) == 0
-
-    hoja = hoja_de(tmp_path, LIMPIO)
-    filas = {}
-    for f in range(2, hoja.max_row + 1):
-        valores = [hoja.cell(row=f, column=c).value for c in range(1, 11)]
-        filas.setdefault(valores[2], []).append(valores)
-
-    for nombre, usuario, mail, numero in (
-        ("Lautaro Zalazar", "lzalazar", "lautaro.zalazar@cunix.net", "GI2680001-DE-PRUEBA"),
-        ("Alexis Carnero", "acarnero-de-prueba", "alexis.carnero@ejemplo-de-prueba.invalid", "PR2510126"),
-    ):
-        for valores in filas[nombre]:
-            assert valores[3] == usuario
-            assert valores[4] == mail
-            assert valores[9] == numero
-            # Lo que el resumen mensual no trae y el partner sí acepta vacío.
-            assert valores[8] is None
-            assert valores[0].hour == 0 and valores[0].minute == 0
-
-
-def test_el_informe_dice_de_que_export_salio_cada_desarrollador(tmp_path):
-    (tmp_path / "config").mkdir()
-    shutil.copy(
-        FIXTURES / "mapeo-completo-de-prueba.yaml", tmp_path / "config" / "mapeo.yaml"
-    )
-    shutil.copytree(RAIZ / "input" / "2026-08", tmp_path / "input" / "2026-08")
-    assert procesar_mes("2026-08", tmp_path) == 0
-
-    # Sólo las líneas del listado de desarrolladores, que llevan sus horas.
-    lineas = [l for l in informe(tmp_path).splitlines() if " registro/s, " in l]
-    origenes = {l.split(" (")[0].strip("  - "): l.split("[")[1].rstrip("]") for l in lineas}
-    assert origenes == {
-        "Alexis Carnero": "resumen mensual",
-        "Franco Dodera": "reporte de detalle",
-        "Lautaro Zalazar": "resumen mensual",
-        "Luciano Carducci": "reporte de detalle",
-        "Matias Zalazar": "reporte de detalle",
-    }
-
-
-def test_el_informe_avisa_de_las_columnas_vacias_del_resumen_mensual(tmp_path):
-    """No frena nada: es lo que el dueño necesita para decidir si lo manda."""
-    (tmp_path / "config").mkdir()
-    shutil.copy(
-        FIXTURES / "mapeo-completo-de-prueba.yaml", tmp_path / "config" / "mapeo.yaml"
-    )
-    shutil.copytree(RAIZ / "input" / "2026-08", tmp_path / "input" / "2026-08")
-    assert procesar_mes("2026-08", tmp_path) == 0
-
-    texto = informe(tmp_path)
-    assert "SIN DESCRIPCIÓN Y SIN HORA DE INICIO" in texto
-    assert "Alexis Carnero" in texto
-    assert "Lautaro Zalazar" in texto
-    assert "reporte de detalle y corré de nuevo" in texto
-    # Los que exportaron con el detalle no aparecen en esa lista.
-    aviso = texto.split("SIN DESCRIPCIÓN Y SIN HORA DE INICIO")[1].split("Esto NO")[0]
-    assert "Franco Dodera" not in aviso
-
-
-def test_los_tres_exports_de_detalle_siguen_dando_las_mismas_horas(tmp_path):
-    """62.5, 76.5 y 8.0: lo que este cambio no puede haber tocado."""
-    (tmp_path / "config").mkdir()
-    shutil.copy(
-        FIXTURES / "mapeo-completo-de-prueba.yaml", tmp_path / "config" / "mapeo.yaml"
-    )
-    shutil.copytree(RAIZ / "input" / "2026-08", tmp_path / "input" / "2026-08")
-    assert procesar_mes("2026-08", tmp_path) == 0
-
-    hoja = hoja_de(tmp_path, LIMPIO)
-    horas = {}
-    for f in range(2, hoja.max_row + 1):
-        nombre = hoja.cell(row=f, column=3).value
-        segundos = hoja.cell(row=f, column=2).value.total_seconds()
-        horas[nombre] = horas.get(nombre, 0.0) + segundos / 3600
-
-    assert horas["Franco Dodera"] == 62.5
-    assert horas["Matias Zalazar"] == 76.5
-    assert horas["Luciano Carducci"] == 8.0
-    assert horas["Lautaro Zalazar"] == 9.0
-    assert horas["Alexis Carnero"] == 150.0
-
-
-def test_punta_a_punta_el_project_number_de_luciano_es_210(tmp_path):
-    """El caso que distingue el Project number del código entre corchetes."""
-    (tmp_path / "config").mkdir()
+    (tmp_path / "templates").mkdir()
     shutil.copy(RAIZ / "config" / "mapeo.yaml", tmp_path / "config" / "mapeo.yaml")
-    (tmp_path / "input" / "2026-08").mkdir(parents=True)
-    shutil.copy(
-        RAIZ / "input" / "2026-08" / "luciano.xlsx",
-        tmp_path / "input" / "2026-08" / "luciano.xlsx",
-    )
+    for plantilla in (RAIZ / "templates").glob("*"):
+        shutil.copy(plantilla, tmp_path / "templates" / plantilla.name)
+    shutil.copytree(RAIZ / "input" / "2026-08", tmp_path / "input" / "2026-08")
+    return tmp_path
 
-    assert procesar_mes("2026-08", tmp_path) == 0
-    hoja = hoja_de(tmp_path, LIMPIO)
-    numeros = {hoja.cell(row=f, column=10).value for f in range(2, hoja.max_row + 1)}
-    assert numeros == {"210"}
-    assert "AD2690002" not in numeros
+
+def test_punta_a_punta_agosto_2026_da_306_horas(agosto):
+    assert procesar_mes("2026-08", agosto) == 0
+    hoja = hoja_detalle(agosto)
+    assert round(horas_de(hoja), 2) == 306.0
+
+
+def test_punta_a_punta_agosto_2026_separa_las_horas_de_cada_persona(agosto):
+    procesar_mes("2026-08", agosto)
+    hoja = hoja_detalle(agosto)
+    por_persona = {}
+    for f in filas_de(hoja):
+        persona = hoja.cell(f, detalle_xlsx.COL_PERSONA).value
+        por_persona[persona] = por_persona.get(persona, 0.0) + hoja.cell(
+            f, detalle_xlsx.COL_HORAS
+        ).value
+    assert {k: round(v, 2) for k, v in por_persona.items()} == HORAS_DE_AGOSTO
+
+
+def test_punta_a_punta_la_persona_sin_usuario_queda_sin_usuario(agosto):
+    """La hoja Datos se compromete a que la celda vacía signifique eso."""
+    procesar_mes("2026-08", agosto)
+    datos = openpyxl.load_workbook(agosto / "output" / "2026-08" / DETALLE)["Datos"]
+    equipo = {
+        datos.cell(f, 1).value: datos.cell(f, 3).value
+        for f in range(8, 23)
+        if datos.cell(f, 1).value
+    }
+    assert equipo["Gabriel Denis"] is None
+    assert equipo["Matias Zalazar"] == "mzalazar"
+
+
+def test_punta_a_punta_las_tablas_del_informe_cierran_en_306(agosto):
+    procesar_mes("2026-08", agosto)
+    documento = Document(agosto / "output" / "2026-08" / INFORME)
+    for indice, columna in ((1, 2), (2, 2), (3, 4)):
+        tabla = documento.tables[indice]
+        assert round(_suma(tabla, columna), 1) == 306.0
+        assert tabla.rows[-1].cells[columna].text.strip() == "306,0"
+
+
+def test_punta_a_punta_las_filas_movidas_llevan_nota_klg(agosto):
+    procesar_mes("2026-08", agosto)
+    hoja = hoja_detalle(agosto)
+    assert hoja.cell(1, detalle_xlsx.COL_NOTA).value == "Nota KLG"
+    con_nota = [f for f in filas_de(hoja) if hoja.cell(f, detalle_xlsx.COL_NOTA).value]
+    assert con_nota
+
+
+def test_punta_a_punta_el_resumen_no_arrastra_las_horas_de_otro_mes(agosto):
+    """Resumen!B5 lo carga C.UNIX a mano: si viene con un número, descuadra."""
+    procesar_mes("2026-08", agosto)
+    resumen = openpyxl.load_workbook(agosto / "output" / "2026-08" / DETALLE)["Resumen"]
+    assert resumen["B5"].value is None

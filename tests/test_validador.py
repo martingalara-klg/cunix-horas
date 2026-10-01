@@ -1,157 +1,83 @@
+"""Los avisos de carga de horas, sobre los registros crudos de cada persona.
+
+Antes había dos juegos de avisos: éste y uno que trabajaba sobre el `Reporte`
+pivoteado del Excel por desarrollador. Ese formato se eliminó, y con él el
+aviso de desvío por redondeo, que sólo tenía sentido ahí: los anexos escriben
+las horas exactas. Los cuatro avisos que quedan son los que siguen importando,
+y están cubiertos acá uno por uno.
+"""
 import calendar
 from datetime import date
 
-from cunix_horas.agregador import Fila, Reporte
 from cunix_horas.lector_kimai import Registro
-from cunix_horas.validador import dato_de_desvio, validar
+from cunix_horas.validador import avisos_de_desarrollador
+
+ANIO, MES = 2025, 10
 
 
-def dias_habiles_completos():
+def registro(dia, horas, mes=MES, anio=ANIO):
+    return Registro(date(anio, mes, dia), horas, "mzalazar", "CO2610170", "Desarrollo")
+
+
+def mes_habil_completo():
     """Octubre 2025 con 8 h en cada día hábil y nada los fines de semana."""
-    return {
-        dia: 8.0 for dia in range(1, 32) if calendar.weekday(2025, 10, dia) < 5
-    }
+    return [
+        registro(dia, 8.0)
+        for dia in range(1, 32)
+        if calendar.weekday(ANIO, MES, dia) < 5
+    ]
 
 
-def reporte(horas_por_dia, descartados=()):
-    return Reporte(
-        nombre_dev="Matias Zalazar",
-        nombre_archivo="Zalazar",
-        anio=2025,
-        mes=10,
-        filas=(Fila("Cliente", "Proyecto", "Desarrollo", dict(horas_por_dia)),),
-        descartados=tuple(descartados),
-    )
+def avisos(del_mes, descartados=()):
+    return avisos_de_desarrollador(list(del_mes), list(descartados), ANIO, MES)
 
 
 def test_sin_problemas_no_hay_avisos():
-    assert validar(reporte(dias_habiles_completos())) == []
+    assert avisos(mes_habil_completo()) == []
 
 
 def test_avisa_si_un_dia_supera_las_12_horas():
-    horas = dias_habiles_completos()
-    horas[1] = 14.0
-    avisos = validar(reporte(horas))
-    assert any("14.0" in a and "1/10/2025" in a for a in avisos)
+    del_mes = mes_habil_completo() + [registro(1, 6.0)]
+    assert any("14.0" in a and "1/10/2025" in a for a in avisos(del_mes))
+
+
+def test_no_avisa_con_exactamente_12_horas():
+    """El límite es «más de 12», no «12»: una jornada larga no es un hallazgo."""
+    del_mes = mes_habil_completo() + [registro(1, 4.0)]
+    assert not any("Más de 12" in a for a in avisos(del_mes))
 
 
 def test_avisa_por_horas_en_fin_de_semana():
-    horas = dias_habiles_completos()
-    horas[4] = 3.0  # 2025-10-04 es sábado
-    avisos = validar(reporte(horas))
-    assert any("fin de semana" in a and "4/10/2025" in a for a in avisos)
+    del_mes = mes_habil_completo() + [registro(4, 3.0)]  # 2025-10-04, sábado
+    assert any("fin de semana" in a and "4/10/2025" in a for a in avisos(del_mes))
 
 
 def test_avisa_por_dias_habiles_sin_carga():
-    horas = dias_habiles_completos()
-    del horas[1]
-    del horas[2]
-    avisos = validar(reporte(horas))
-    assert any("sin carga" in a and "1/10/2025" in a for a in avisos)
-    assert any("sin carga" in a and "2/10/2025" in a for a in avisos)
+    del_mes = [r for r in mes_habil_completo() if r.fecha.day not in (1, 2)]
+    resultado = avisos(del_mes)
+    assert any("sin carga" in a and "1/10/2025" in a for a in resultado)
+    assert any("sin carga" in a and "2/10/2025" in a for a in resultado)
+
+
+def test_no_avisa_por_un_fin_de_semana_sin_carga():
+    assert not any("sin carga" in a and "4/10/2025" in a for a in avisos(mes_habil_completo()))
 
 
 def test_avisa_por_registros_descartados():
-    descartado = Registro(date(2025, 9, 30), 4.0, "mzalazar", "CO2610170", "Desarrollo")
-    avisos = validar(reporte(dias_habiles_completos(), [descartado]))
-    assert any("fuera del mes" in a and "30/9/2025" in a for a in avisos)
+    descartado = registro(30, 4.0, mes=9)
+    resultado = avisos(mes_habil_completo(), [descartado])
+    assert any("fuera del mes" in a and "30/9/2025" in a for a in resultado)
+    assert any("EXCLUIDO de los anexos" in a for a in resultado)
 
 
-def reporte_de_varias_filas(horas_por_dia, cantidad_filas):
-    """Mismo mes, con N filas de actividad idénticas: muchas celdas de día."""
-    return Reporte(
-        nombre_dev="Matias Zalazar",
-        nombre_archivo="Zalazar",
-        anio=2025,
-        mes=10,
-        filas=tuple(
-            Fila("Cliente", "Proyecto", f"Actividad {n}", dict(horas_por_dia))
-            for n in range(cantidad_filas)
-        ),
-        descartados=(),
-    )
+def test_las_horas_del_dia_se_suman_entre_registros():
+    """El límite diario mira el día entero, no cada carga por separado."""
+    del_mes = mes_habil_completo() + [registro(1, 3.0), registro(1, 2.0)]
+    assert any("13.0" in a and "1/10/2025" in a for a in avisos(del_mes))
 
 
-def test_no_hay_falsos_positivos_de_desvio_por_redondeo():
-    """Horas exactas: el redondeo no aparta nada, no hay nada que avisar."""
-    assert not any(
-        "Desvío por redondeo" in a for a in validar(reporte(dias_habiles_completos()))
-    )
-
-
-# Una duración de Kimai se carga en minutos, así que las horas que puede
-# producir son múltiplos de 1/60. 50 minutos son 0.8333... h, que redondeadas a
-# la celda de día valen 0.83: se pierden 0.0033 h por celda. Un dev-mes de
-# muchas celdas así acumula décimas de hora, y eso es lo que el aviso vigila.
-MINUTOS_POR_CELDA = 50
-HORAS_POR_CELDA = MINUTOS_POR_CELDA / 60
-
-
-def test_avisa_cuando_el_redondeo_acumula_mas_que_el_umbral():
-    """El aviso vigila el total del Excel contra las horas crudas del export.
-
-    Regresión: el aviso anterior comparaba valores redondeados contra valores
-    redondeados, que es la misma cuenta dos veces y no puede dispararse nunca.
-    Lo que sí puede pasar es esto: cada celda de día pierde hasta 0.005 h al
-    redondearse y el error se acumula con la cantidad de celdas.
-
-    Segunda regresión: este test usaba 8.00499 h por celda, un valor que
-    ninguna duración de Kimai puede producir. Un control que sólo se dispara
-    con un input imposible no prueba nada; ahora son 124 celdas de 50 minutos.
-    """
-    # 0.0033 h de pérdida por celda x 31 días x 4 filas = 0.41 h.
-    horas = {dia: HORAS_POR_CELDA for dia in range(1, 32)}
-    avisos = validar(reporte_de_varias_filas(horas, 4))
-
-    desvios = [a for a in avisos if "Desvío por redondeo" in a]
-    assert len(desvios) == 1
-    assert "0.41 h" in desvios[0]
-    assert "redondea" in desvios[0]
-    assert "no es un error de carga" in desvios[0].lower()
-
-
-def test_el_aviso_de_desvio_no_llama_a_las_horas_del_mes_el_total_de_kimai():
-    """Los registros descartados no entran en ese número; el texto lo aclara."""
-    horas = {dia: HORAS_POR_CELDA for dia in range(1, 32)}
-    descartado = Registro(
-        date(2025, 9, 30), 4.0, "mzalazar", "CO2610170", "Desarrollo"
-    )
-    reporte_con_descartes = Reporte(
-        nombre_dev="Matias Zalazar",
-        nombre_archivo="Zalazar",
-        anio=2025,
-        mes=10,
-        filas=tuple(
-            Fila("Cliente", "Proyecto", f"Actividad {n}", dict(horas))
-            for n in range(4)
-        ),
-        descartados=(descartado,),
-    )
-    desvio = next(
-        a for a in validar(reporte_con_descartes) if "Desvío por redondeo" in a
-    )
-    assert "export de Kimai trae" not in desvio
-    assert "caen en 10/2025" in desvio
-    assert "fuera del mes" in desvio
-
-
-def test_el_desvio_por_redondeo_no_se_avisa_por_debajo_del_umbral():
-    """Un desvío chico es ruido de presentación, no se pone delante del dueño."""
-    # 0.0033 h x 31 días x 1 fila = 0.10 h, por debajo de las 0.25 h del umbral.
-    horas = {dia: HORAS_POR_CELDA for dia in range(1, 32)}
-    assert not any(
-        "Desvío por redondeo" in a for a in validar(reporte_de_varias_filas(horas, 1))
-    )
-
-
-def test_el_desvio_se_informa_siempre_aunque_no_supere_el_umbral():
-    """El dueño factura con estos números: los ve todos los meses."""
-    horas = {dia: HORAS_POR_CELDA for dia in range(1, 32)}
-    dato = dato_de_desvio(reporte_de_varias_filas(horas, 1))
-    assert "0.10 h" in dato
-    assert "informativo" in dato
-
-
-def test_el_dato_de_desvio_tambien_esta_cuando_el_desvio_es_cero():
-    dato = dato_de_desvio(reporte(dias_habiles_completos()))
-    assert "0.00 h" in dato
+def test_no_muta_lo_que_recibe():
+    del_mes = mes_habil_completo()
+    copia = list(del_mes)
+    avisos(del_mes)
+    assert del_mes == copia
