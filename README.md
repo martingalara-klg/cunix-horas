@@ -1,6 +1,32 @@
 # cunix-horas
 
-Convierte los exports de Kimai en **el archivo mensual que recibe el partner**.
+Convierte los exports de Kimai en **lo que KLG le entrega a C.UNIX todos los
+meses**.
+
+## El entregable de hoy: los dos anexos
+
+C.UNIX recibe **dos documentos por mes**, con el formato que mandó él mismo:
+
+- **Anexo II** — el informe mensual en Word: horas e importe por proyecto,
+  horas por persona, principales trabajos y observaciones.
+- **Anexo II-A** — el detalle en Excel: una fila por registro de tiempo, con
+  las columnas de control y revisión que C.UNIX completa después.
+
+Las plantillas vacías de los dos viven en `templates/`:
+
+```
+templates/Anexo-II-Informe-mensual-horas-KLG.docx
+templates/Anexo-II-A-Detalle-horas-KLG.xlsx
+```
+
+**Todavía no las usa el CLI.** Agosto de 2026, el primer mes entregado con
+este formato, salió de `scripts/anexos_agosto_2026.py`, un script atado a ese
+mes. Promover ese script a parte de la herramienta es el trabajo que queda
+pendiente; abajo, «Lo que falta».
+
+Lo que el CLI genera hoy sigue siendo el consolidado plano del formato
+anterior (`Horas KLG-<Mes><Año>.xlsx`), que es lo que describe el resto de
+este README.
 
 ## Uso mensual
 
@@ -49,9 +75,12 @@ con las horas sumadas por día. Cambió porque factura sobre el detalle: quiere
 ver cada carga con su hora de inicio, su descripción y su número de proyecto,
 y un solo adjunto por mes.
 
-El escritor de ese formato, su plantilla y sus tests **siguen en el repo** y
-siguen probados, pero el programa ya no los usa. Si el partner vuelve atrás,
-se recupera sin reescribir nada.
+Ese formato **se eliminó del repo** (`escritor_excel.py`, sus tests y
+`templates/plantilla.xlsx`). Se había conservado «por si el partner vuelve
+atrás», pero el partner no volvió atrás: volvió a cambiar, y ahora recibe los
+dos anexos. Un escritor que nadie ejecuta no está probado contra nada real,
+y mantenerlo costaba más que recuperarlo del historial de git si alguna vez
+hiciera falta.
 
 ## Si falta un desarrollador
 
@@ -287,11 +316,49 @@ python -m pytest -v
 ## Estructura
 
 ```
-config/mapeo.yaml        configuración editada a mano
-templates/plantilla.xlsx estilos del formato anterior (ya no se usa)
-input/AAAA-MM/           exports de Kimai, .xlsx o .csv (se versionan)
-output/AAAA-MM/          el archivo del partner (NO se versiona)
-cunix_horas/             el código
-tests/                   los tests
-docs/superpowers/        spec y plan de implementación
+config/mapeo.yaml          configuración editada a mano
+templates/                 las plantillas vacías de los dos anexos de C.UNIX
+input/AAAA-MM/             exports de Kimai, .xlsx o .csv (se versionan)
+input/AAAA-MM/manual/      planillas que NO salen de Kimai (ver abajo)
+output/AAAA-MM/            lo que se entrega (se versiona con `git add -f`)
+cunix_horas/               el código
+scripts/                   los scripts de un mes concreto
+tests/                     los tests
+docs/superpowers/          spec y plan de implementación
 ```
+
+### `input/AAAA-MM/manual/`
+
+Ahí van las planillas del mes que **no salen de Kimai** y que, sin embargo,
+hacen falta para armar los anexos. De agosto de 2026 hay dos:
+
+| Archivo | Qué es |
+|---|---|
+| `gabriel-denis.xlsx` | Las 91 h de Gabriel Denis, que trabajó sin usuario de Kimai y cuyas horas quedaron cargadas en la cuenta de Alexis Carnero. |
+| `alexis-carnero.xlsx` | El detalle diario que entregó Alexis Carnero después del reclamo de C.UNIX. Aporta las descripciones que Kimai nunca registró. |
+| `anexo-II-informe-cunix.docx` | El Anexo II tal como lo mandó C.UNIX, con agosto cargado como ejemplo. Es la base que corrige el script. |
+| `anexo-II-A-detalle-cunix.xlsx` | Lo mismo, el Anexo II-A. De acá salieron también las plantillas vacías de `templates/`. |
+
+Son la **única copia** de esos datos: sin ellas, agosto de 2026 no se puede
+volver a generar. Por eso están versionadas y no en la raíz.
+
+El CLI **no mira** esta carpeta: recorre `input/AAAA-MM/*.xlsx` y `*.csv` sin
+entrar en subcarpetas. Hoy la lee sólo `scripts/anexos_agosto_2026.py`.
+
+## Lo que falta
+
+- **Promover los anexos a la herramienta.** Hoy los genera
+  `scripts/anexos_agosto_2026.py`, con los textos y los números de agosto de
+  2026 escritos adentro. El CLI todavía no sabe nada de las plantillas de
+  `templates/`.
+- **Decidir qué pasa con el consolidado plano.** `detalle.py` y
+  `escritor_detalle.py` siguen siendo lo que corre `python -m cunix_horas`,
+  pero C.UNIX ya no recibe ese archivo.
+- **La plantilla del Anexo II-A arrastra dos cosas de agosto de 2026**, en
+  hojas que C.UNIX arma y KLG no toca: `Resumen!B5` tiene `306` fijo (las
+  horas que C.UNIX concilia contra Kimai, que él carga a mano) y la hoja
+  `Instrucciones` describe agosto como ejemplo. Hay que resolverlo antes de
+  usar la plantilla para otro mes.
+- **El párrafo «EJEMPLO: agosto 2026…»** sigue en la plantilla del Anexo II:
+  es la nota con la que C.UNIX la mandó, y queda pendiente decidir si se
+  borra al generar.

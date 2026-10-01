@@ -28,7 +28,14 @@ from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from cunix_horas.detalle import SEGUNDOS_POR_HORA, Detalle
-from cunix_horas.escritor_excel import MESES_ABREVIADOS
+
+# Venía de `escritor_excel.py`, el escritor del Excel pivoteado por
+# desarrollador, que se eliminó junto con el resto de ese formato. Acá queda
+# la única copia. Nunca strftime("%b"): depende del locale de la máquina.
+MESES_ABREVIADOS = {
+    1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr", 5: "May", 6: "Jun",
+    7: "Jul", 8: "Aug", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dec",
+}
 
 ENCABEZADOS = (
     "Date",

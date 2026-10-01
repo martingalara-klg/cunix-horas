@@ -2,8 +2,9 @@
 """Edicion puntual de los dos anexos de agosto 2026 que C.UNIX envio como ejemplo.
 
 QUE HACE
-    Lee los originales de la raiz del repositorio (nunca los modifica) y escribe
-    dos copias corregidas en ``output/2026-08/`` con el mismo nombre:
+    Lee los dos anexos que mando C.UNIX, que viven en
+    ``input/2026-08/manual/`` (nunca los modifica), y escribe dos copias
+    corregidas en ``output/2026-08/``:
 
       * ``Anexo-II-A-Detalle-horas-KLG-2026-08.xlsx``
       * ``Anexo-II-Informe-mensual-horas-KLG-2026-08 (1).docx``
@@ -11,11 +12,12 @@ QUE HACE
     La correccion central es separar las horas de Gabriel Denis de las de
     Alexis Carnero. Gabriel trabajo 91 h en agosto 2026 pero no tiene usuario
     de Kimai: sus horas quedaron cargadas en la cuenta de Alexis. Las horas de
-    Gabriel salen de ``horas_agosto_2026 (2).xlsx`` (hoja ``Agosto 2026``).
+    Gabriel salen de ``input/2026-08/manual/gabriel-denis.xlsx``
+    (hoja ``Agosto 2026``).
     Ademas se completan los pendientes que C.UNIX dejo marcados para que los
     llene KLG (perfiles, usuarios de Kimai, principales trabajos y
     observaciones), y se cargan las descripciones de Alexis Carnero, que
-    Kimai nunca registro: salen de ``Horas_Agosto_2026_Alexis_Carnero.xlsx``
+    Kimai nunca registro: salen de ``input/2026-08/manual/alexis-carnero.xlsx``
     (hoja ``Agosto 2026``), la planilla que el entrego despues del reclamo de
     C.UNIX. Esa planilla solo aporta descripciones: dia, inicio, fin y horas
     se verifican contra el anexo ya separado y, si algo no coincide, el script
@@ -120,10 +122,25 @@ NOTA_ALEXIS_CONFIRMADA = (
 
 RAIZ = Path(__file__).resolve().parent.parent
 SALIDA = RAIZ / "output" / "2026-08"
-ORIGEN_XLSX = RAIZ / "Anexo-II-A-Detalle-horas-KLG-2026-08.xlsx"
-ORIGEN_DOCX = RAIZ / "Anexo-II-Informe-mensual-horas-KLG-2026-08 (1).docx"
-ORIGEN_GABRIEL = RAIZ / "horas_agosto_2026 (2).xlsx"
-ORIGEN_ALEXIS = RAIZ / "Horas_Agosto_2026_Alexis_Carnero.xlsx"
+
+# Las fuentes del mes que NO salen de Kimai. Son la unica copia de esos datos:
+# sin ellas agosto de 2026 no se puede volver a generar, asi que viven
+# versionadas junto al resto de la entrada del mes.
+FUENTES_MANUALES = RAIZ / "input" / "2026-08" / "manual"
+
+# Los dos anexos tal como los mando C.UNIX, con agosto cargado como ejemplo.
+# El script los edita; nunca los modifica. Las plantillas vacias de
+# templates/ NO sirven aca: este script corrige el ejemplo de C.UNIX, no
+# arma un mes desde cero.
+ORIGEN_XLSX = FUENTES_MANUALES / "anexo-II-A-detalle-cunix.xlsx"
+ORIGEN_DOCX = FUENTES_MANUALES / "anexo-II-informe-cunix.docx"
+
+# Los nombres con los que C.UNIX espera recibirlos. Van aparte del nombre de
+# la fuente: la fuente se puede renombrar, el entregable no.
+NOMBRE_SALIDA_XLSX = "Anexo-II-A-Detalle-horas-KLG-2026-08.xlsx"
+NOMBRE_SALIDA_DOCX = "Anexo-II-Informe-mensual-horas-KLG-2026-08 (1).docx"
+ORIGEN_GABRIEL = FUENTES_MANUALES / "gabriel-denis.xlsx"
+ORIGEN_ALEXIS = FUENTES_MANUALES / "alexis-carnero.xlsx"
 
 PRIMERA_FILA = 2
 ULTIMA_FILA_RANGO = 601
@@ -364,7 +381,7 @@ def aplicar_detalle_de_alexis(filas, alexis):
 
 
 def escribir_excel(filas):
-    destino = SALIDA / ORIGEN_XLSX.name
+    destino = SALIDA / NOMBRE_SALIDA_XLSX
     # Sin data_only: las formulas se conservan como formulas.
     libro = openpyxl.load_workbook(ORIGEN_XLSX)
 
@@ -661,7 +678,7 @@ def _clonar_fila(tabla, indice_modelo, indice_destino):
 
 
 def escribir_informe(filas, explicaciones):
-    destino = SALIDA / ORIGEN_DOCX.name
+    destino = SALIDA / NOMBRE_SALIDA_DOCX
     documento = Document(ORIGEN_DOCX)
 
     resumen = {}

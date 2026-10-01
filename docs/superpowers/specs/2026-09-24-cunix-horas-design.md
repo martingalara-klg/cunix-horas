@@ -1,7 +1,9 @@
 # cunix-horas — Conversión de exports Kimai a Excel mensual del partner
 
 **Fecha:** 2026-09-24
-**Estado:** Implementado. Actualizado el 2026-09-28 con el cambio de entregable: del Excel pivoteado por desarrollador al archivo único con el detalle plano.
+**Estado:** Implementado. Actualizado el 2026-09-28 con el cambio de entregable (del Excel pivoteado al archivo único con el detalle plano) y el 2026-10-01 con la limpieza de los dos formatos muertos y la preparación de las plantillas de los anexos.
+
+> **El entregable volvió a cambiar.** Desde agosto de 2026 KLG le entrega a C.UNIX **dos documentos**: el **Anexo II** (informe mensual, Word) y el **Anexo II-A** (detalle, Excel), con el formato que mandó C.UNIX. Las plantillas vacías están en `templates/`. **El CLI todavía no las usa**: agosto salió de `scripts/anexos_agosto_2026.py`, un script atado a ese mes. Lo que esta spec describe de acá en adelante es el pipeline del consolidado plano, que sigue siendo lo que corre `python -m cunix_horas`. Promover los anexos a la herramienta es trabajo pendiente y todavía no está especificado.
 
 ## Problema
 
@@ -11,7 +13,14 @@ CUNIX (software factory, outsourcing) debe reportar mensualmente a su partner la
 
 Un proceso repetible: se depositan los exports mensuales de Kimai en una carpeta, se ejecuta un comando, y sale el archivo listo para enviar, con el formato exacto que el partner recibe.
 
-**El entregable cambió** (ver «Formato de salida»): el partner pasó de recibir un Excel pivoteado por desarrollador a recibir **un solo archivo por mes con el detalle plano de todos**, una fila por registro de tiempo. El escritor del formato anterior, su plantilla y sus tests siguen en el repo, pero el CLI ya no los llama.
+**El entregable cambió dos veces.** Primero el partner pasó de recibir un Excel pivoteado por desarrollador a recibir **un solo archivo por mes con el detalle plano de todos**, una fila por registro de tiempo (lo que esta spec describe). Después C.UNIX impuso sus propios **Anexo II y Anexo II-A**, que son el entregable de hoy y que esta spec todavía no describe.
+
+Los dos formatos muertos **se eliminaron del repo el 2026-10-01**:
+
+| Generación | Qué se eliminó | Por qué |
+|---|---|---|
+| Pivot por desarrollador | `escritor_excel.py`, `tests/test_escritor_excel.py`, `templates/plantilla.xlsx` | El CLI no lo llamaba desde el 2026-09-28. Se había conservado «por si el partner vuelve atrás»; el partner no volvió atrás, volvió a cambiar. Un escritor que nadie ejecuta no está probado contra nada real, y el historial de git alcanza para recuperarlo. |
+| Respaldo mensual | `scripts/respaldo_agosto_2026.py` y su salida | Lo reemplazaron los anexos de C.UNIX. |
 
 ## Alcance
 
@@ -214,9 +223,9 @@ Cuando no falla nada, el nombre es el limpio.
 
 Arriba de todo, `_validacion.txt` dice qué desarrolladores entraron y cuáles no, con el motivo de cada fallo.
 
-## Formato de salida anterior — Excel pivoteado por desarrollador (conservado, sin ejecutar)
+## Formato de salida anterior — Excel pivoteado por desarrollador (ELIMINADO)
 
-**Este formato ya no se genera.** El escritor (`escritor_excel.py`), su plantilla (`templates/plantilla.xlsx`) y sus tests siguen en el repo y siguen verdes: si el partner vuelve atrás, se recupera sin reescribir nada. Lo que sigue lo describe.
+**Este formato ya no se genera y su código ya no está en el repo.** El escritor (`escritor_excel.py`), su plantilla (`templates/plantilla.xlsx`) y sus tests se eliminaron el 2026-10-01; se recuperan del historial de git si alguna vez hiciera falta. Lo que sigue queda como documentación de lo que fue.
 
 Un `.xlsx` por desarrollador, una sola hoja llamada `Worksheet`.
 
@@ -304,7 +313,7 @@ input/2025-10/*.xlsx  y  *.csv
    +--> escritor_detalle  -> output/2025-10/Horas KLG-Oct2025.xlsx  + integridad
 ```
 
-El camino anterior (`agregador` → `escritor_excel`, un Excel por desarrollador) sigue en el repo y probado, pero el CLI ya no lo recorre.
+El camino anterior (`agregador` → `escritor_excel`, un Excel por desarrollador) se eliminó a medias: `escritor_excel.py` ya no está, `agregador.py` sí. Ver «Lo que quedó pendiente», al final.
 
 Módulos en `cunix_horas/` (paquete en la raíz del proyecto, no bajo `src/`: así `python -m cunix_horas` funciona sin `pip install -e .`, requisito para el `.bat` de doble clic):
 
@@ -319,9 +328,8 @@ Módulos en `cunix_horas/` (paquete en la raíz del proyecto, no bajo `src/`: as
 | `mapeo.py` | Carga y valida el YAML. Resuelve código → (cliente, proyecto, numero_proyecto). Resuelve username *o* nombre para mostrar → (nombre, archivo, mail, username). | — |
 | `detalle.py` | `list[Registro]` + mapeo → `Detalle`: una `FilaDetalle` por registro, ordenadas, más los proyectos sin mapear y los `Project number` ambiguos. | `mapeo` |
 | `escritor_detalle.py` | `Detalle` → el `.xlsx` del partner. Incluye la verificación de integridad, que **relee** el archivo escrito. | openpyxl |
-| `agregador.py` | **Conservado, sin ejecutar.** `list[Registro]` + mapeo → `Reporte` con jerarquía y totales. | `mapeo` |
-| `validador.py` | `avisos_de_desarrollador()` sobre registros crudos (vigente) y `validar()`/`dato_de_desvio()` sobre el `Reporte` (conservados). | — |
-| `escritor_excel.py` | **Conservado, sin ejecutar.** `Reporte` + plantilla → `.xlsx` pivoteado. | openpyxl |
+| `agregador.py` | **Sin ejecutar, pendiente de eliminar.** `list[Registro]` + mapeo → `Reporte` con jerarquía y totales. Sobrevive sólo porque `validador.validar()` usa sus tipos. | `mapeo` |
+| `validador.py` | `avisos_de_desarrollador()` sobre registros crudos (vigente) y `validar()`/`dato_de_desvio()` sobre el `Reporte` (muertos, pendientes de eliminar). | `agregador` |
 | `cli.py` | Orquesta: recorre `input/<mes>/`, procesa cada archivo, escribe output y `_validacion.txt`. | todos |
 
 Tipos centrales:
@@ -513,3 +521,19 @@ Cobertura por módulo:
 
 - Integración directa con la API de Kimai (elimina el paso manual de exportar).
 - Comparación mes a mes / detección de desvíos.
+
+## Lo que quedó pendiente (2026-10-01)
+
+La limpieza de esta fecha tocó sólo lo que podía eliminarse sin cambiar lógica. Queda:
+
+1. **Los anexos no están especificados.** El entregable de hoy —`Anexo II` y `Anexo II-A`— lo genera `scripts/anexos_agosto_2026.py`, con los textos y los números de agosto de 2026 adentro. Las plantillas vacías ya están en `templates/`, pero nada del paquete `cunix_horas/` las conoce. Esta spec todavía describe el pipeline del consolidado plano.
+
+2. **`agregador.py` sigue vivo sin tener para qué.** Es la última pieza del pivot. No se eliminó porque `validador.py` importa de él los tipos `Reporte` y `Fila` para `validar()` y `dato_de_desvio()`, dos funciones que tampoco llama nadie. Eliminar las tres cosas —`agregador.py`, `tests/test_agregador.py`, y `validar()`/`dato_de_desvio()`/`_desvio_por_redondeo()` de `validador.py` con sus tests— es un solo movimiento, y requiere tocar `validador.py`.
+
+3. **El consolidado plano sigue siendo lo que corre `python -m cunix_horas`.** `detalle.py` y `escritor_detalle.py` están vivos y probados, pero C.UNIX ya no recibe ese archivo. Qué pasa con ellos se decide cuando los anexos entren a la herramienta.
+
+4. **Las fuentes manuales del mes** viven en `input/AAAA-MM/manual/`. Son los archivos que no salen de Kimai y sin los cuales el mes no se puede reproducir. De agosto de 2026 hay cuatro: las horas de Gabriel Denis, el detalle de Alexis Carnero, y los dos anexos tal como los mandó C.UNIX, que son la base que `scripts/anexos_agosto_2026.py` corrige (las plantillas vacías de `templates/` no sirven para eso: el script edita el ejemplo de C.UNIX, no arma un mes desde cero). El CLI no entra en esa subcarpeta: recorre `input/<mes>/*.xlsx` y `*.csv` con `glob`, que no es recursivo.
+
+5. **La plantilla del Anexo II-A arrastra dos datos de agosto de 2026**, los dos en partes que arma C.UNIX y que la limpieza dejó intactas a propósito: `Resumen!B5` tiene `306` fijo (es la celda «Horas en Kimai según C.UNIX», que él carga a mano, no una fórmula) y la hoja `Instrucciones` describe agosto como ejemplo. Hay que resolverlo antes de usar la plantilla para otro mes.
+
+6. **El párrafo «EJEMPLO: agosto 2026…»** quedó en la plantilla del Anexo II tal como lo mandó C.UNIX. Falta decidir si el generador lo borra.

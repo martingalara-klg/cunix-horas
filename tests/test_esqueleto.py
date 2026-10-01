@@ -10,5 +10,8 @@ def test_los_fixtures_existen():
     assert (FIXTURES / "plantilla.xlsx").is_file()
 
 
-def test_la_plantilla_de_produccion_existe():
-    assert (RAIZ / "templates" / "plantilla.xlsx").is_file()
+def test_las_plantillas_de_los_anexos_existen():
+    """Los dos anexos que KLG entrega todos los meses salen de acá."""
+    plantillas = RAIZ / "templates"
+    assert (plantillas / "Anexo-II-A-Detalle-horas-KLG.xlsx").is_file()
+    assert (plantillas / "Anexo-II-Informe-mensual-horas-KLG.docx").is_file()

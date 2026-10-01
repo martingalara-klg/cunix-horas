@@ -1,0 +1,65 @@
+# Mapeo de prueba INCOMPLETO. Es el caso que el programa tiene que manejar:
+# alguien exportó con el resumen mensual, que no trae usuario, mail ni número
+# de proyecto, y al mapeo le falta justo eso.
+#
+# Le faltan dos datos a propósito, los dos que hacen caer un archivo:
+#
+#   1. Alexis Carnero no está en `personas:`, así que sus filas del resumen
+#      mensual no tienen `User` ni `E-mail`.
+#   2. Victorius 3 (GI2680001) no tiene `numero_proyecto:`, así que las filas
+#      de Lautaro Zalazar no tienen `Project number`.
+#
+# Con esto, los dos archivos de resumen mensual de input/2026-08/ quedan
+# afuera y el consolidado sale marcado como INCOMPLETO. Los tres que vienen
+# del reporte de detalle entran igual.
+#
+# Vive acá y NO en config/mapeo.yaml: el test prueba el comportamiento del
+# programa, no la configuración de producción, que el dueño completa y cambia
+# cuando quiere. El mapeo completo equivalente está en
+# `mapeo-completo-de-prueba.yaml`.
+
+archivo_salida: "Horas KLG-{mes}{anio}.xlsx"
+
+actividad: "Desarrollo"
+
+personas:
+  franco:
+    nombre: "Franco Dodera"
+    archivo: "Dodera"
+  mzalazar:
+    nombre: "Matias Zalazar"
+    archivo: "M Zalazar"
+  lcarducci:
+    nombre: "Luciano Carducci"
+    archivo: "Carducci"
+  lzalazar:
+    nombre: "Lautaro Zalazar"
+    archivo: "L Zalazar"
+    mail: "lautaro.zalazar@ejemplo-de-prueba.invalid"
+  # FALTA A PROPÓSITO: Alexis Carnero no está declarada. Exportó con el
+  # resumen mensual, así que sin esta entrada no hay `User` ni `E-mail` y su
+  # archivo no entra.
+
+proyectos:
+  CO2610170:
+    cliente: "Servicio Nacional de Aduanas"
+    proyecto: "Subastas"
+    numero_proyecto: "CO2610170"
+  CO2510115:
+    cliente: "Instituto de Salud Pública de Chile"
+    proyecto: "SIAC-OIRS"
+    numero_proyecto: "CO2510115"
+  PR2510126:
+    cliente: "MINVU"
+    proyecto: "SELICO"
+    numero_proyecto: "PR2510126"
+  AD2690002:
+    cliente: "Sistemas - C.UNIX"
+    proyecto: "VictoriusCP2"
+    numero_proyecto: "210"
+  GI2680001:
+    cliente: "Sistemas - C.UNIX"
+    proyecto: "Victorius 3"
+    # FALTA A PROPÓSITO: sin `numero_proyecto:`, las filas de Lautaro Zalazar
+    # que vienen del resumen mensual no tienen `Project number` y su archivo
+    # no entra.

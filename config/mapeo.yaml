@@ -75,16 +75,12 @@ personas:
     archivo: "L Zalazar"
     mail: "lautaro.zalazar@cunix.net"
 
-  # >>> PENDIENTE - FALTA COMPLETAR <<<
-  # Alexis Carnero exporto con el resumen mensual y NO sabemos su username de
-  # Kimai ni su mail. No se inventan: hasta que no esten, alexis.xlsx NO ENTRA
-  # al archivo del mes y el programa lo avisa con el bloque para pegar aca.
-  # Cuando los tengas, agrega debajo de esta linea (sin los '#'):
-  #
-  #   <username-de-kimai-de-alexis>:
-  #     nombre: "Alexis Carnero"
-  #     archivo: "Carnero"
-  #     mail: "<mail-de-kimai-de-alexis>"
+  # Alexis tambien exporto con el resumen mensual. Usuario y mail confirmados
+  # por el dueno el 2026-09-28.
+  acarnero:
+    nombre: "Alexis Carnero"
+    archivo: "Carnero"
+    mail: "alexis.carnero@cunix.net"
 
 proyectos:
   CO2610170:
@@ -107,9 +103,10 @@ proyectos:
   GI2680001:
     cliente: "Sistemas - C.UNIX"
     proyecto: "Victorius 3"
-    # >>> PENDIENTE - FALTA COMPLETAR <<<
-    # No sabemos el Project number que Kimai le da a este proyecto, y no se
-    # inventa. Es el proyecto de Lautaro, que exporto con el resumen mensual:
-    # hasta que no este, lautaro.xlsx NO ENTRA al archivo del mes.
-    # Cuando lo tengas, descomenta la linea de abajo con el valor real:
-    #   numero_proyecto: "<el Project number de Kimai>"
+    # PROVISORIO. Kimai no expone el Project number de este proyecto en el
+    # resumen mensual, y el dueno decidio el 2026-09-28 usar aca el codigo del
+    # corchete, que es un identificador real de Kimai para el mismo proyecto,
+    # en vez de dejar la columna vacia o inventar un texto.
+    # Cuando aparezca el Project number verdadero (ficha del proyecto en Kimai,
+    # o cualquier export de detalle de Lautaro), reemplazar el valor de abajo.
+    numero_proyecto: "GI2680001"

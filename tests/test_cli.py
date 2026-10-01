@@ -445,25 +445,34 @@ def test_si_no_se_puede_escribir_el_informe_va_a_un_archivo_alternativo(
 # --- Punta a punta sobre los cinco exports reales de input/2026-08/ ----------
 
 
-def test_punta_a_punta_con_el_mapeo_incompleto_de_config(tmp_path):
+def test_punta_a_punta_con_un_mapeo_incompleto(tmp_path):
     """Los cinco archivos que el dueño exportó de verdad para agosto de 2026.
 
     Tres son el reporte de detalle y entran solos. Los otros dos son el
-    resumen mensual, que se acepta, pero a `config/mapeo.yaml` todavía le
-    faltan el usuario y el mail de Alexis y el número de proyecto de
+    resumen mensual, que se acepta, pero el mapeo de este test no tiene el
+    usuario ni el mail de Alexis Carnero ni el número de proyecto de
     Victorius 3, y esas columnas no se inventan: esos dos archivos no entran
     y el nombre del archivo lo dice.
+
+    El mapeo sale de `tests/fixtures/mapeo-incompleto-de-prueba.yaml` y no de
+    `config/mapeo.yaml`: lo que se prueba es qué hace el programa cuando al
+    mapeo le falta un dato, no el estado de la configuración de producción,
+    que el dueño completa cuando consigue los datos.
     """
     entrada_real = RAIZ / "input" / "2026-08"
     (tmp_path / "config").mkdir()
-    shutil.copy(RAIZ / "config" / "mapeo.yaml", tmp_path / "config" / "mapeo.yaml")
+    shutil.copy(
+        FIXTURES / "mapeo-incompleto-de-prueba.yaml", tmp_path / "config" / "mapeo.yaml"
+    )
     shutil.copytree(entrada_real, tmp_path / "input" / "2026-08")
 
     assert procesar_mes("2026-08", tmp_path) == 1
 
     detallados = ["franco.csv", "luciano.xlsx", "matias.xlsx"]
     resumidos = ["alexis.xlsx", "lautaro.xlsx"]
-    assert sorted(p.name for p in entrada_real.iterdir()) == sorted(
+    # Los exports del mes son esos cinco y nada más. `manual/` es la carpeta
+    # de las planillas que no salen de Kimai, y el programa no la mira.
+    assert sorted(p.name for p in entrada_real.iterdir() if p.is_file()) == sorted(
         detallados + resumidos
     )
 
