@@ -236,7 +236,7 @@ def test_un_proyecto_sin_codigo_dice_donde_esta(tmp_path):
     assert "sin código" in mensaje
 
 
-# --- El detalle plano: los datos que el partner pide en cada fila ----------
+# --- El detalle de cada registro -------------------------------------------
 
 
 def test_el_primer_registro_del_csv_real_trae_todo_el_detalle():

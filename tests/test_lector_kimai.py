@@ -233,10 +233,11 @@ def test_lector_kimai_no_reexporta_la_epoca_de_excel():
     assert not hasattr(lector_kimai, "EPOCA_EXCEL")
 
 
-# --- El detalle plano: los datos que el partner pide en cada fila ----------
-# El entregable pasó a ser una fila por registro de tiempo, con la hora de
+# --- El detalle de cada registro -------------------------------------------
+# La hoja «Detalle» del Anexo II-A lleva una fila por registro, con la hora de
 # inicio, el nombre para mostrar, el mail, la descripción y el número de
-# proyecto. Kimai los trae; antes se descartaban porque el pivot no los usaba.
+# proyecto. Kimai los trae y el lector los conserva, aunque los anexos de hoy
+# no escriban todos los campos.
 
 ENCABEZADOS_CON_DETALLE = {
     **ENCABEZADOS,
@@ -290,9 +291,9 @@ def test_el_numero_de_proyecto_no_es_el_codigo_entre_corchetes():
     """Luciano: el corchete dice AD2690002 y el Project number de Kimai es 210.
 
     Son dos campos distintos y los dos hacen falta: el del corchete es la
-    clave del mapeo, el número va tal cual al archivo del partner (que en
-    septiembre mostró justo 210 para este proyecto). Confundirlos le
-    mandaría al partner un número de proyecto que no es el suyo.
+    clave del mapeo, y el número es un campo propio de Kimai (que en
+    septiembre mostró justo 210 para este proyecto). Los anexos de hoy no
+    escriben el número, pero el lector no puede confundirlos.
     """
     registros = leer(FIXTURES / "kimai-timesheet-xlsx-lcarducci.xlsx")
     assert {r.cod_proyecto for r in registros} == {"AD2690002"}

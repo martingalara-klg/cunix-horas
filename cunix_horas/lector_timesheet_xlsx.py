@@ -94,8 +94,8 @@ def _verificar_encabezados_del_detalle(
         raise ErrorLectura(
             f"{ruta.name}: las columnas de la fila 1 no están donde se "
             f"esperaba: {', '.join(corridas)}.\n"
-            f"  Leerlas igual pondría el dato equivocado en cada columna del "
-            f"archivo que recibe el partner.\n"
+            f"  Leerlas igual pondría el dato equivocado en cada columna de "
+            f"los anexos que recibe C.UNIX.\n"
             f"  Exportá de nuevo desde Kimai con el reporte de detalle, sin "
             f"agregar ni mover columnas a mano."
         )
