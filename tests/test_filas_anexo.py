@@ -16,7 +16,7 @@ from cunix_horas.mapeo import DestinoProyecto, Mapeo
 
 MAPEO = Mapeo(
     personas={},
-    proyectos={"PR01": DestinoProyecto("MINVU", "SELICO", "PR01")},
+    proyectos={"PR01": DestinoProyecto("MINVU", "SELICO")},
 )
 
 

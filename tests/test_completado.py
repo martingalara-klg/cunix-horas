@@ -2,15 +2,17 @@
 
 Dos reglas que no se cruzan:
 
-- Un registro del **resumen mensual** se completa desde el mapeo, y si al
-  mapeo le falta el usuario, el mail o el número de proyecto, ese archivo no
-  entra, con el bloque YAML listo para pegar.
-- Un registro del **reporte de detalle** no mira el mapeo ni aunque el mapeo
-  declare esos campos: sus valores son los de Kimai.
+- Un registro del **resumen mensual** saca del mapeo el usuario de Kimai, que
+  es lo único que le falta y que los anexos escriben. Si el mapeo no lo
+  resuelve, el usuario queda vacío y sale un aviso: ese archivo entra igual.
+- Un registro del **reporte de detalle** no mira el mapeo: sus valores son los
+  de Kimai.
+
+Ni el mail ni el número de proyecto se completan: el Anexo II-A no tiene esas
+columnas, así que el mapeo ya no los declara.
 """
 from datetime import date, time
 
-import pytest
 import yaml
 
 from cunix_horas.completado import completar_desde_mapeo
@@ -20,22 +22,21 @@ from cunix_horas.kimai_comun import (
     ORIGEN_RESUMEN_MENSUAL,
     Registro,
 )
-from cunix_horas.mapeo import DestinoProyecto, ErrorMapeo, Mapeo, Persona
+from cunix_horas.mapeo import DestinoProyecto, Mapeo, Persona
 
 ARCHIVO = "lautaro.xlsx"
 
 PERSONA = Persona(
     nombre="Lautaro Zalazar",
     archivo="L Zalazar",
-    mail="lautaro.zalazar@cunix.net",
     username="lzalazar",
 )
 
-PROYECTO = DestinoProyecto("Sistemas - C.UNIX", "Victorius 3", "GI-123")
+PROYECTO = DestinoProyecto("Sistemas - C.UNIX", "Victorius 3")
 
 
-def mapeo(persona=PERSONA, proyecto=PROYECTO):
-    return Mapeo({persona.username: persona}, {"GI2680001": proyecto})
+def mapeo(personas=(PERSONA,), proyecto=PROYECTO):
+    return Mapeo({p.username: p for p in personas}, {"GI2680001": proyecto})
 
 
 def del_resumen(**cambios):
@@ -66,34 +67,32 @@ def _bloque_yaml(mensaje: str, clave: str) -> str:
     return "\n".join(bloque)
 
 
-# --- El resumen mensual se completa desde el mapeo --------------------------
+# --- El resumen mensual saca del mapeo el usuario de Kimai ------------------
 
 
-def test_completa_el_user_el_mail_y_el_project_number():
-    completado = completar_desde_mapeo([del_resumen()], mapeo(), ARCHIVO)[0]
-    assert completado.username == "lzalazar"
-    assert completado.email == "lautaro.zalazar@cunix.net"
-    assert completado.numero_proyecto == "GI-123"
+def test_completa_el_usuario_de_kimai():
+    completado = completar_desde_mapeo([del_resumen()], mapeo(), ARCHIVO)
+    assert completado.registros[0].username == "lzalazar"
+    assert completado.avisos == ()
 
 
 def test_el_name_sale_del_propio_archivo():
     """El nombre para mostrar lo trae el export; el mapeo no lo pisa."""
-    completado = completar_desde_mapeo([del_resumen()], mapeo(), ARCHIVO)[0]
-    assert completado.nombre == "Lautaro Zalazar"
+    completado = completar_desde_mapeo([del_resumen()], mapeo(), ARCHIVO)
+    assert completado.registros[0].nombre == "Lautaro Zalazar"
 
 
 def test_no_muta_el_registro_que_recibe():
     original = del_resumen()
     completar_desde_mapeo([original], mapeo(), ARCHIVO)
     assert original.username == "Lautaro Zalazar"
-    assert original.email == ""
-    assert original.numero_proyecto == ""
+    assert original.nombre == ""
 
 
 def test_la_fila_del_anexo_sale_sin_descripcion_y_sin_horario():
     """Las tres columnas que el resumen mensual no trae y la plantilla acepta."""
-    registros = completar_desde_mapeo([del_resumen()], mapeo(), ARCHIVO)
-    fila = construir(registros, mapeo()).filas[0]
+    registros = completar_desde_mapeo([del_resumen()], mapeo(), ARCHIVO).registros
+    fila = construir(list(registros), mapeo()).filas[0]
 
     assert fila.descripcion == ""
     assert fila.inicio is None and fila.fin is None
@@ -101,88 +100,94 @@ def test_la_fila_del_anexo_sale_sin_descripcion_y_sin_horario():
 
 
 def test_la_fila_del_anexo_sale_con_la_persona_y_el_proyecto_resueltos():
-    registros = completar_desde_mapeo([del_resumen()], mapeo(), ARCHIVO)
-    fila = construir(registros, mapeo()).filas[0]
+    registros = completar_desde_mapeo([del_resumen()], mapeo(), ARCHIVO).registros
+    armado = construir(list(registros), mapeo())
 
-    assert fila.persona == "Lautaro Zalazar"
-    assert fila.proyecto == "Victorius 3"
-    # El usuario y el mail los completó el mapeo sobre el registro: van a la
-    # hoja Datos, no a la fila del Detalle.
-    assert registros[0].username == "lzalazar"
-    assert registros[0].email == "lautaro.zalazar@cunix.net"
-
-
-# --- Lo que el mapeo no tiene frena ese archivo -----------------------------
+    assert armado.filas[0].persona == "Lautaro Zalazar"
+    assert armado.filas[0].proyecto == "Victorius 3"
+    # El usuario lo completó el mapeo sobre el registro: va a la hoja Datos,
+    # no a la fila del Detalle.
+    assert armado.usuarios == (("Lautaro Zalazar", "lzalazar"),)
 
 
-def test_sin_mail_el_archivo_no_entra_y_el_mensaje_nombra_a_la_persona():
-    sin_mail = Persona("Lautaro Zalazar", "L Zalazar", "", "lzalazar")
-    with pytest.raises(ErrorMapeo) as excepcion:
-        completar_desde_mapeo([del_resumen()], mapeo(persona=sin_mail), ARCHIVO)
-
-    mensaje = str(excepcion.value)
-    assert "Lautaro Zalazar" in mensaje
-    assert "E-mail" in mensaje
-    assert ARCHIVO in mensaje
-    assert "resumen mensual" in mensaje
+# --- Lo que el mapeo no tiene AVISA, no frena -------------------------------
 
 
-def test_el_error_de_mail_trae_el_bloque_yaml_pegable():
-    sin_mail = Persona("Lautaro Zalazar", "L Zalazar", "", "lzalazar")
-    with pytest.raises(ErrorMapeo) as excepcion:
-        completar_desde_mapeo([del_resumen()], mapeo(persona=sin_mail), ARCHIVO)
-
-    datos = yaml.safe_load(_bloque_yaml(str(excepcion.value), "lzalazar:"))
-    assert datos["lzalazar"]["nombre"] == "Lautaro Zalazar"
-    assert "mail" in datos["lzalazar"]
-
-
-def test_sin_numero_de_proyecto_el_archivo_no_entra():
-    sin_numero = DestinoProyecto("Sistemas - C.UNIX", "Victorius 3")
-    with pytest.raises(ErrorMapeo) as excepcion:
-        completar_desde_mapeo([del_resumen()], mapeo(proyecto=sin_numero), ARCHIVO)
-
-    mensaje = str(excepcion.value)
-    assert "GI2680001" in mensaje
-    assert "Victorius 3" in mensaje
-    assert "Project number" in mensaje
-    assert ARCHIVO in mensaje
+def test_una_persona_que_no_esta_en_el_mapeo_entra_igual_sin_usuario():
+    completado = completar_desde_mapeo(
+        [del_resumen(username="Alexis Carnero")], mapeo(), ARCHIVO
+    )
+    registro = completado.registros[0]
+    assert registro.nombre == "Alexis Carnero"
+    assert registro.username == ""
+    assert registro.horas == 2.0
+    assert len(completado.avisos) == 1
 
 
-def test_el_error_de_numero_de_proyecto_trae_el_bloque_yaml_pegable():
-    sin_numero = DestinoProyecto("Sistemas - C.UNIX", "Victorius 3")
-    with pytest.raises(ErrorMapeo) as excepcion:
-        completar_desde_mapeo([del_resumen()], mapeo(proyecto=sin_numero), ARCHIVO)
-
-    datos = yaml.safe_load(_bloque_yaml(str(excepcion.value), "GI2680001:"))
-    assert datos["GI2680001"]["proyecto"] == "Victorius 3"
-    assert "numero_proyecto" in datos["GI2680001"]
-
-
-def test_un_proyecto_que_no_esta_en_el_mapeo_tambien_frena():
-    """Sin entrada no hay número, y el número no se deriva de nada."""
-    with pytest.raises(ErrorMapeo) as excepcion:
-        completar_desde_mapeo(
-            [del_resumen(cod_proyecto="XX9999999")], mapeo(), ARCHIVO
-        )
-    assert "XX9999999" in str(excepcion.value)
+def test_el_aviso_nombra_a_la_persona_el_archivo_y_por_que_importa():
+    completado = completar_desde_mapeo(
+        [del_resumen(username="Alexis Carnero")], mapeo(), ARCHIVO
+    )
+    (aviso,) = completado.avisos
+    assert "Alexis Carnero" in aviso
+    assert ARCHIVO in aviso
+    assert "resumen mensual" in aviso
+    assert "su propio usuario" in aviso
+    assert "no frena nada" in aviso
 
 
-def test_una_persona_que_no_esta_en_el_mapeo_frena_con_su_nombre():
-    with pytest.raises(ErrorMapeo) as excepcion:
-        completar_desde_mapeo(
-            [del_resumen(username="Alexis Carnero")], mapeo(), ARCHIVO
-        )
-    mensaje = str(excepcion.value)
-    assert "Alexis Carnero" in mensaje
-    assert "mail:" in mensaje
+def test_el_aviso_trae_el_bloque_yaml_pegable():
+    completado = completar_desde_mapeo(
+        [del_resumen(username="Alexis Carnero")], mapeo(), ARCHIVO
+    )
+    datos = yaml.safe_load(
+        _bloque_yaml(completado.avisos[0], "AJUSTAR-username-de-kimai:")
+    )
+    entrada = datos["AJUSTAR-username-de-kimai"]
+    assert entrada["nombre"] == "Alexis Carnero"
+    assert "archivo" in entrada
+    # El mail ya no se pide: no hay columna donde escribirlo.
+    assert "mail" not in entrada
 
 
-def test_el_mensaje_aclara_que_los_demas_siguen():
-    sin_mail = Persona("Lautaro Zalazar", "L Zalazar", "", "lzalazar")
-    with pytest.raises(ErrorMapeo) as excepcion:
-        completar_desde_mapeo([del_resumen()], mapeo(persona=sin_mail), ARCHIVO)
-    assert "Los demás desarrolladores se procesan igual" in str(excepcion.value)
+def test_la_fila_de_una_persona_sin_mapear_sale_completa_igual():
+    registros = completar_desde_mapeo(
+        [del_resumen(username="Alexis Carnero")], mapeo(), ARCHIVO
+    ).registros
+    armado = construir(list(registros), mapeo())
+
+    assert armado.filas[0].persona == "Alexis Carnero"
+    assert armado.filas[0].horas == 2.0
+    # Igual que Gabriel Denis, que no tiene usuario de Kimai: celda vacía.
+    assert armado.usuarios == (("Alexis Carnero", ""),)
+
+
+def test_avisa_una_sola_vez_por_persona_aunque_tenga_muchos_registros():
+    sin_mapear = [del_resumen(username="Alexis Carnero") for _ in range(5)]
+    assert len(completar_desde_mapeo(sin_mapear, mapeo(), ARCHIVO).avisos) == 1
+
+
+def test_dos_personas_con_el_mismo_nombre_avisan_en_vez_de_frenar():
+    repetidas = (
+        Persona("Lautaro Zalazar", "L Zalazar", "lzalazar"),
+        Persona("Lautaro Zalazar", "Zalazar L", "lzalazar2"),
+    )
+    completado = completar_desde_mapeo(
+        [del_resumen()], mapeo(personas=repetidas), ARCHIVO
+    )
+    (aviso,) = completado.avisos
+    assert completado.registros[0].username == ""
+    assert "lzalazar" in aviso and "lzalazar2" in aviso
+    assert "no frena nada" in aviso
+
+
+def test_un_proyecto_que_no_esta_en_el_mapeo_tampoco_frena():
+    """El Anexo II-A no tiene columna de número de proyecto: nada que pedir."""
+    completado = completar_desde_mapeo(
+        [del_resumen(cod_proyecto="XX9999999")], mapeo(), ARCHIVO
+    )
+    assert completado.avisos == ()
+    assert completado.registros[0].horas == 2.0
 
 
 # --- El reporte de detalle no mira el mapeo ---------------------------------
@@ -205,24 +210,24 @@ DEL_DETALLE = Registro(
 
 
 def test_el_detalle_sale_tal_cual_aunque_el_mapeo_diga_otra_cosa():
-    """El mapeo declara usuario, mail y número, y Kimai dice otros tres."""
-    completado = completar_desde_mapeo([DEL_DETALLE], mapeo(), "matias.xlsx")[0]
+    """El mapeo declara otro usuario para esa persona y Kimai manda."""
+    completado = completar_desde_mapeo([DEL_DETALLE], mapeo(), "matias.xlsx")
 
-    assert completado is DEL_DETALLE
-    assert completado.username == "el-de-kimai"
-    assert completado.email == "el-mail-de-kimai@cunix.net"
-    assert completado.numero_proyecto == "el-numero-de-kimai"
+    assert completado.registros[0] is DEL_DETALLE
+    assert completado.registros[0].username == "el-de-kimai"
+    assert completado.avisos == ()
 
 
-def test_el_detalle_no_frena_aunque_al_mapeo_le_falte_todo():
+def test_el_detalle_no_avisa_ni_frena_aunque_el_mapeo_este_vacio():
     """Un mapeo vacío no es problema del detalle: sus datos vienen de Kimai."""
-    vacio = Mapeo({}, {})
-    assert completar_desde_mapeo([DEL_DETALLE], vacio, "matias.xlsx") == [DEL_DETALLE]
+    completado = completar_desde_mapeo([DEL_DETALLE], Mapeo({}, {}), "matias.xlsx")
+    assert completado.registros == (DEL_DETALLE,)
+    assert completado.avisos == ()
 
 
 def test_los_dos_origenes_conviven_en_la_misma_lista():
-    completados = completar_desde_mapeo(
+    completado = completar_desde_mapeo(
         [DEL_DETALLE, del_resumen()], mapeo(), "mezcla.xlsx"
     )
-    assert completados[0].username == "el-de-kimai"
-    assert completados[1].username == "lzalazar"
+    assert completado.registros[0].username == "el-de-kimai"
+    assert completado.registros[1].username == "lzalazar"

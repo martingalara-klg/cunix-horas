@@ -29,9 +29,9 @@ EPOCA_EXCEL = date(1899, 12, 30)
 # de la fila de cliente dejaría de coincidir con la lectura de la grilla.
 PRIMERA_COL_DE_DIA = "C"
 
-# De qué reporte de Kimai salió un registro. El detalle trae las diez columnas
-# que el partner factura; el resumen mensual trae la grilla de días y hay que
-# completarle el usuario, el mail y el número de proyecto desde el mapeo.
+# De qué reporte de Kimai salió un registro. El detalle trae una fila por
+# registro con todas sus columnas; el resumen mensual trae la grilla de días y
+# hay que completarle el usuario de Kimai desde el mapeo.
 ORIGEN_DETALLE = "reporte de detalle"
 ORIGEN_RESUMEN_MENSUAL = "resumen mensual"
 
@@ -49,9 +49,12 @@ class Registro:
     """Un registro de tiempo individual de Kimai.
 
     Los primeros cinco campos son los que necesitaba el Excel pivoteado por
-    desarrollador. Los de abajo son los que pide el detalle plano que ahora
-    recibe el partner: una fila por registro, con la hora de inicio, el
-    nombre para mostrar, el mail, la descripción y el número de proyecto.
+    desarrollador. Los de abajo son el resto de lo que trae el reporte de
+    detalle de Kimai.
+
+    `email` y `numero_proyecto` se conservan tal como vienen del export, pero
+    hoy ningún anexo los escribe: el Anexo II-A no tiene esas columnas. Se
+    leen porque están en el archivo; nunca se exigen ni frenan nada.
 
     Todos los agregados van **al final y con valor por defecto**, para no
     romper las construcciones posicionales que ya existen.

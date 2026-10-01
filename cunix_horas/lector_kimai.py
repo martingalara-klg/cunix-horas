@@ -12,17 +12,15 @@ distinto. `leer()` mira el archivo y elige el lector; los tres devuelven
 Nunca se adivina: si la fila 1 no es ninguna de esas, se falla diciendo qué
 se encontró y qué formatos se reconocen.
 
-**Los dos reportes sirven, y no dan lo mismo.** El de detalle trae las diez
-columnas que el partner factura. El resumen mensual trae las horas ya sumadas
-por día: no trae la hora de inicio, ni el usuario, ni el mail, ni la
-descripción, ni el número de proyecto.
+**Los dos reportes sirven, y no dan lo mismo.** El de detalle trae una fila
+por registro con todo lo que Kimai sabe. El resumen mensual trae las horas ya
+sumadas por día: no trae la hora de inicio, ni el usuario, ni la descripción.
 
-De esos cinco, la descripción vacía y la hora en 00:00 son aceptables —el
-archivo de referencia del partner tiene 112 de 160 filas sin descripción y una
-con la hora en 00:00—, pero el usuario, el mail y el número de proyecto tienen
-que ir llenos. Esos tres se completan desde `config/mapeo.yaml`, en
-`completado.py`, y si el mapeo no los tiene **ese archivo no entra**. Nunca se
-inventan y nunca salen en blanco.
+De eso, lo único que alguno de los dos anexos escribe y el resumen no trae es
+el **usuario de Kimai** de la hoja `Datos`, que `completado.py` saca de
+`config/mapeo.yaml`. Si el mapeo no lo tiene, queda vacío con un aviso: nunca
+se inventa, y **ningún archivo se frena por eso**. Las columnas Inicio, Fin y
+Descripción vacías son aceptables y el informe las avisa.
 """
 from __future__ import annotations
 
@@ -94,9 +92,9 @@ def leer(ruta: Path) -> list[Registro]:
     columna, texto = MARCA_RESUMEN_MENSUAL
     if encabezado.get(columna, "").strip() == texto:
         # Los registros salen marcados como `origen=ORIGEN_RESUMEN_MENSUAL`:
-        # `completado.completar_desde_mapeo` es el que les pone el usuario, el
-        # mail y el número de proyecto, o frena el archivo si el mapeo no los
-        # tiene.
+        # `completado.completar_desde_mapeo` es el que les pone el usuario de
+        # Kimai desde el mapeo, o lo deja vacío con un aviso si el mapeo no lo
+        # tiene. Nunca frena el archivo.
         return leer_resumen_mensual(ruta, hoja)
 
     raise _error_de_formato_desconocido(ruta, encabezado)

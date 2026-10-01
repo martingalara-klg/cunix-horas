@@ -426,8 +426,8 @@ def leer_resumen_mensual(ruta: Path, hoja: HojaXlsx) -> list[Registro]:
                     actividad=etiqueta,
                     texto_proyecto=texto_proyecto,
                     # Marca el origen para que `completado` sepa que a este
-                    # registro le faltan el usuario, el mail y el número de
-                    # proyecto, y que esos tres salen del mapeo.
+                    # registro le falta el usuario de Kimai, y que ése sale
+                    # del mapeo si está declarado.
                     origen=ORIGEN_RESUMEN_MENSUAL,
                 )
             )

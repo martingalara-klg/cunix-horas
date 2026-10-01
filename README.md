@@ -203,7 +203,47 @@ pegar.
 
 La sección `personas:` sólo hace falta para quien exporta con el **resumen
 mensual**, que no trae el usuario: ahí la persona se resuelve por su `nombre:`,
-que tiene que coincidir exactamente con lo que muestra Kimai.
+que tiene que coincidir exactamente con lo que muestra Kimai. Si no está
+declarada, **tampoco frena nada**: esa persona entra con todas sus horas y la
+columna «Usuario Kimai» de la hoja `Datos` le queda vacía, igual que a quien
+todavía no tiene usuario. `_validacion.txt` la nombra y explica que C.UNIX
+pide que cada uno cargue sus horas con su propio usuario.
+
+Ni las personas ni los proyectos llevan `mail:` o `numero_proyecto:`. Esos dos
+campos existían para un entregable anterior, que era un archivo plano con
+columnas `E-mail` y `Project number`. **Los anexos de hoy no tienen esas
+columnas** —el Anexo II-A va `Fecha | Inicio | Fin | Persona | Proyecto |
+Descripción | Horas | Alertas | Revisión C.UNIX | Horas aprobadas | Horas a
+pagar | Observación C.UNIX | Día nuevo | Nota KLG`—, así que pedirlos sólo
+servía para trabar una entrega por un dato que después no se escribía en
+ningún lado. Si te quedaron esas líneas en tu `mapeo.yaml` viejo, se ignoran;
+podés borrarlas.
+
+## Qué frena una entrega y qué sólo se avisa
+
+**Frena** (no se genera nada, o ese export no entra):
+
+- un export que no se puede leer o que no tiene formato de Kimai → **no entra
+  ese archivo**, los demás sí, y los anexos salen marcados como INCOMPLETO;
+- una planilla manual que falta, o cuyas horas no cierran contra la persona a
+  la que se le restan (un día negativo, o un día que la otra persona no tiene)
+  → **no se genera ningún anexo**;
+- el Anexo II-A escrito cuyas horas no coinciden con las de los exports →
+  **no se genera ese archivo**;
+- `config/mapeo.yaml` roto o con un campo declarado en blanco.
+
+**Sólo avisa** en `_validacion.txt`, y la entrega sale igual:
+
+- una persona del resumen mensual que no está en `personas:`, o cuyo `nombre:`
+  está declarado en dos entradas → usuario de Kimai vacío;
+- un proyecto que no está en `proyectos:` → sale con el nombre que trae Kimai;
+- un proyecto sin valor hora en la hoja `Datos` de la plantilla → sale con sus
+  horas y sin importe;
+- registros sin descripción, días hábiles sin carga, horas en fin de semana,
+  más de 12 h en un día, registros fuera del mes.
+
+La regla es una sola: **frena lo que haría salir mal el entregable; avisa todo
+lo que el dueño puede mirar y decidir.**
 
 ---
 
@@ -248,6 +288,9 @@ programa, se envía lo que hay en `output/<mes>/`.
 - **Qué `.xlsx` y `.docx` hay en la carpeta que esta corrida NO generó.** Esos
   no van en el envío del mes.
 - **Los proyectos sin mapear** y **los proyectos sin valor hora**.
+- **Las personas que van sin usuario de Kimai** en la hoja `Datos`, con el
+  bloque listo para pegar: C.UNIX pide que cada uno cargue con su propio
+  usuario, así que esa celda vacía queda explicada. No frena nada.
 - **Los registros sin descripción**, por persona y con la cantidad: el
   contrato de C.UNIX pide la descripción para aprobar esas horas.
 - **Los avisos de carga**, agrupados por desarrollador: días hábiles sin

@@ -28,17 +28,22 @@
 #            si no coinciden, tampoco se genera nada. Es la excepcion: desde
 #            septiembre 2026 todos cargan la descripcion en Kimai.
 #
-# personas:  OPCIONAL para quien exporta con el REPORTE DE DETALLE: ese export
-#            trae el nombre, el usuario y el mail de cada desarrollador, y el
-#            mapeo no interviene aunque diga otra cosa.
+# personas:  OPCIONAL. Quien exporta con el REPORTE DE DETALLE trae su nombre
+#            y su usuario en cada fila, y el mapeo no interviene aunque diga
+#            otra cosa.
 #
-#            OBLIGATORIA para quien exporta con el RESUMEN MENSUAL: ese reporte
-#            trae solo el nombre, las horas y el proyecto, asi que la persona
-#            se resuelve por `nombre`, que tiene que coincidir exactamente con
-#            lo que muestra Kimai.
+#            Quien exporta con el RESUMEN MENSUAL trae solo el nombre, las
+#            horas y el proyecto: su usuario de Kimai sale de aca, buscandolo
+#            por `nombre`, que tiene que coincidir exactamente con lo que
+#            muestra Kimai. Si no esta declarado NO SE FRENA NADA: la columna
+#            "Usuario Kimai" de la hoja Datos queda vacia y _validacion.txt lo
+#            avisa con nombre y apellido, porque C.UNIX pide que cada persona
+#            cargue sus horas con su propio usuario.
 #
 #            clave = username de Kimai (columna F del export plano). Es lo que
 #            va en la columna "Usuario Kimai" de la hoja Datos.
+#
+#            No hay `mail:`: ninguno de los dos anexos tiene columna de mail.
 #
 # proyectos: clave = codigo entre corchetes del campo Project (columna J).
 #            Se usa el codigo y no el nombre porque el codigo no cambia aunque
@@ -49,6 +54,7 @@
 #            Un proyecto que no este aca NO frena nada: sale con el nombre que
 #            trae Kimai y queda listado en _validacion.txt con el bloque listo
 #            para pegar.
+#            No hay `numero_proyecto:`: el Anexo II-A no tiene esa columna.
 
 anexos:
   archivo_detalle: "Anexo-II-A-Detalle-horas-KLG-{periodo}.xlsx"
@@ -98,45 +104,31 @@ personas:
   lcarducci:
     nombre: "Luciano Carducci"
     archivo: "Carducci"
-  # Lautaro exporto con el reporte de resumen mensual, que no trae username ni
-  # mail. Se resuelve por `nombre`, y su usuario es la clave de abajo.
+  # Lautaro exporto con el reporte de resumen mensual, que no trae el
+  # username. Se resuelve por `nombre`, y su usuario es la clave de abajo.
   lzalazar:
     nombre: "Lautaro Zalazar"
     archivo: "L Zalazar"
-    mail: "lautaro.zalazar@cunix.net"
 
-  # Alexis tambien exporto con el resumen mensual. Usuario y mail confirmados
-  # por el dueno el 2026-09-28.
+  # Alexis tambien exporto con el resumen mensual. Usuario confirmado por el
+  # dueno el 2026-09-28.
   acarnero:
     nombre: "Alexis Carnero"
     archivo: "Carnero"
-    mail: "alexis.carnero@cunix.net"
 
 proyectos:
   CO2610170:
     cliente: "Servicio Nacional de Aduanas"
     proyecto: "Subastas"
-    numero_proyecto: "CO2610170"
   CO2510115:
     cliente: "Instituto de Salud Pública de Chile"
     proyecto: "SIAC-OIRS"
-    numero_proyecto: "CO2510115"
   PR2510126:
     cliente: "MINVU"
     proyecto: "SELICO"
-    numero_proyecto: "PR2510126"
   AD2690002:
     cliente: "Sistemas - C.UNIX"
     proyecto: "VictoriusCP2"
-    # El caso que muestra que el Project number NO es el codigo del corchete.
-    numero_proyecto: "210"
   GI2680001:
     cliente: "Sistemas - C.UNIX"
     proyecto: "Victorius 3"
-    # PROVISORIO. Kimai no expone el Project number de este proyecto en el
-    # resumen mensual, y el dueno decidio el 2026-09-28 usar aca el codigo del
-    # corchete, que es un identificador real de Kimai para el mismo proyecto,
-    # en vez de dejar la columna vacia o inventar un texto.
-    # Cuando aparezca el Project number verdadero (ficha del proyecto en Kimai,
-    # o cualquier export de detalle de Lautaro), reemplazar el valor de abajo.
-    numero_proyecto: "GI2680001"

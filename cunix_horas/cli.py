@@ -74,6 +74,9 @@ class Leido:
     archivo: str
     del_mes: tuple[Registro, ...]
     descartados: tuple[Registro, ...]
+    # Lo que el mapeo no pudo completar y no frena nada: hoy, el usuario de
+    # Kimai de alguien que exportó con el resumen mensual y no está declarado.
+    avisos: tuple[str, ...] = ()
 
 
 def _reconfigurar_salida_utf8() -> None:
@@ -441,6 +444,31 @@ def _seccion_de_sin_descripcion(filas) -> list[str]:
     return lineas
 
 
+def _seccion_de_sin_usuario(leidos: list[Leido]) -> list[str]:
+    """Quiénes van a la hoja «Datos» sin usuario de Kimai, y por qué.
+
+    No frena nada: el usuario de Kimai es una sola celda de la hoja `Datos` y
+    las horas de esa persona entran completas igual. Pero C.UNIX pide que cada
+    uno cargue con su propio usuario, así que la celda vacía tiene que estar
+    explicada acá y no aparecer sola en el anexo.
+    """
+    avisos = [aviso for leido in leidos for aviso in leido.avisos]
+    if not avisos:
+        return []
+    lineas = [
+        "--- Personas sin usuario de Kimai en la hoja «Datos» ---",
+        "",
+        f"{len(avisos)} persona/s del mes van con la columna «Usuario Kimai» "
+        f"vacía. NO FRENA NADA: sus horas y sus filas están completas en los "
+        f"dos anexos.",
+        "",
+    ]
+    for aviso in avisos:
+        lineas.extend(f"  {linea}" for linea in aviso.splitlines())
+        lineas.append("")
+    return lineas
+
+
 def _resumen_de_validacion(
     mes: str,
     leidos: list[Leido],
@@ -508,6 +536,7 @@ def _resumen_de_validacion(
     lineas.extend(_seccion_de_sin_mapear(armado))
     lineas.extend(_seccion_de_sin_valor_hora(totales_proyecto))
     lineas.extend(_seccion_de_sin_descripcion(filas))
+    lineas.extend(_seccion_de_sin_usuario(leidos))
 
     lineas.append("--- Avisos de validación ---")
     lineas.append("")
@@ -607,7 +636,8 @@ def _leer_entradas(
     leidos: list[Leido] = []
     for entrada in entradas:
         try:
-            registros = completar_desde_mapeo(leer(entrada), mapeo, entrada.name)
+            completado = completar_desde_mapeo(leer(entrada), mapeo, entrada.name)
+            registros = list(completado.registros)
         except (ErrorLectura, ErrorMapeo) as error:
             registrar_fallo(entrada.name, str(error))
             continue
@@ -627,7 +657,14 @@ def _leer_entradas(
             )
             continue
 
-        leidos.append(Leido(entrada.name, tuple(del_mes), tuple(descartados)))
+        leidos.append(
+            Leido(
+                entrada.name,
+                tuple(del_mes),
+                tuple(descartados),
+                completado.avisos,
+            )
+        )
     return leidos
 
 
@@ -722,6 +759,8 @@ def procesar_mes(mes: str, raiz: Path) -> int:
                 "    OJO: sus filas van sin descripción y sin horario. Está "
                 "en el informe."
             )
+        for aviso in leido.avisos:
+            print(f"    AVISO: {aviso.splitlines()[0]}")
 
     registros = [r for leido in leidos for r in leido.del_mes]
     armado = filas_anexo.construir(registros, mapeo) if leidos else None

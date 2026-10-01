@@ -1,4 +1,15 @@
-"""Mapeo de códigos de Kimai a los nombres que ve el partner."""
+"""Mapeo de códigos de Kimai a los nombres y usuarios que ve C.UNIX.
+
+Guarda sólo lo que alguno de los dos anexos escribe: el nombre de cliente y de
+proyecto de cada código, el nombre y el usuario de Kimai de cada persona, los
+nombres de los dos archivos y los textos del informe, y las planillas
+manuales del mes.
+
+Lo que el entregable no escribe no se declara acá. Los anexos no tienen
+columna de mail ni de número de proyecto, así que `mail:` y
+`numero_proyecto:` dejaron de existir: eran dos datos que podían trabar una
+entrega sin llegar nunca a ningún archivo.
+"""
 from __future__ import annotations
 
 import re
@@ -17,8 +28,6 @@ from cunix_horas.anexos import (
     PERFIL_POR_DEFECTO,
 )
 
-_ALIAS = re.compile(r"^\s*\[[^\]]+\]\s*([^|]+)")
-
 # Prefijo '[codigo] ' del texto crudo de Kimai. Se saca para derivar el nombre
 # que ve el partner cuando el proyecto no esta declarado en el mapeo.
 _PREFIJO_CODIGO = re.compile(r"^\s*\[[^\]]+\]\s*")
@@ -32,30 +41,33 @@ class ErrorMapeo(Exception):
 class Persona:
     """Una persona de `personas:`, con lo que el mapeo sabe de ella.
 
-    `mail` y `username` son el respaldo de las dos columnas que el resumen
-    mensual no trae. **Sólo se usan para los registros de ese export**: los
-    del reporte de detalle traen su usuario y su mail de Kimai y no miran
-    acá, aunque el mapeo declare otra cosa.
+    `username` es el respaldo de la única columna que el resumen mensual no
+    trae y que los anexos sí escriben: «Usuario Kimai», en la hoja `Datos`.
+    **Sólo se usa para los registros de ese export**: los del reporte de
+    detalle traen su usuario de Kimai y no miran acá.
+
+    No hay `mail:`. Ninguno de los dos anexos tiene columna de mail, así que
+    el mapeo no guarda un dato que después no se escribe en ningún lado.
     """
 
     nombre: str
     archivo: str
-    # Opcional. Vacío mientras nadie lo declare: es lo que hace frenar un
-    # archivo de resumen mensual, con el bloque YAML para completarlo.
-    mail: str = ""
-    # La clave de `personas:`, que ES el `User` que ve el partner. Viaja
-    # adentro de la Persona para que quien la resuelve por `nombre` no tenga
-    # que volver a buscar cuál era su clave.
+    # La clave de `personas:`, que ES el usuario de Kimai que ve C.UNIX en la
+    # hoja `Datos`. Viaja adentro de la Persona para que quien la resuelve por
+    # `nombre` no tenga que volver a buscar cuál era su clave.
     username: str = ""
 
 
 @dataclass(frozen=True)
 class DestinoProyecto:
+    """Los dos nombres que ve C.UNIX para un código de proyecto de Kimai.
+
+    No hay `numero_proyecto:` por el mismo motivo que no hay `mail:`: el
+    Anexo II-A no tiene columna de número de proyecto.
+    """
+
     cliente: str
     proyecto: str
-    # Opcional, y es el `Project number` que ve el partner. Mismo respaldo que
-    # `Persona.mail`: sólo lo usan los registros del resumen mensual.
-    numero_proyecto: str = ""
 
 
 def _normalizar(texto: str) -> str:
@@ -66,19 +78,6 @@ def _normalizar(texto: str) -> str:
 def _sin_codigo(texto: str) -> str:
     """Le saca el prefijo '[código] ' al texto crudo de Kimai, si lo tiene."""
     return _PREFIJO_CODIGO.sub("", texto or "").strip()
-
-
-def derivar_cliente(texto_kimai: str) -> str:
-    """El nombre de cliente que ve el partner cuando el proyecto no está mapeado.
-
-    '[616050001] Instituto de Salud Pública' -> 'Instituto de Salud Pública'
-    'CUNIX'                                  -> 'CUNIX'
-
-    El segundo caso no es teórico: el cliente de uno de los desarrolladores
-    viene sin corchetes. Si la derivación asumiera el prefijo, ese nombre
-    saldría vacío y el partner recibiría una columna Customer en blanco.
-    """
-    return _sin_codigo(texto_kimai)
 
 
 def derivar_proyecto(texto_kimai: str) -> str:
@@ -92,62 +91,22 @@ def derivar_proyecto(texto_kimai: str) -> str:
     return _sin_codigo(texto_kimai).split("|")[0].strip()
 
 
-def _alias_de_kimai(texto: str) -> str:
-    """'[CO2610170] Aduana-Subastas | descripción larga' -> 'Aduana-Subastas'."""
-    coincidencia = _ALIAS.match(texto)
-    return coincidencia.group(1).strip() if coincidencia else texto.strip()
-
-
 def _texto_opcional(valor, campo: str, entidad: str, ruta: Path) -> str:
     """Un campo opcional del YAML: ausente vale vacío, presente tiene que ser texto.
 
-    No se acepta declarado y en blanco. Ese campo termina en una columna que
-    el partner factura: si está escrito a medias conviene que frene ahora, con
-    el nombre de la entrada, y no que salga vacío del otro lado.
+    No se acepta declarado y en blanco. Lo que queda escrito a medias conviene
+    que frene ahora, con el nombre de la entrada, y no que salga vacío en un
+    anexo que ya está camino a C.UNIX.
     """
     if valor is None:
         return ""
     if not isinstance(valor, str) or not valor.strip():
         raise ErrorMapeo(
             f"'{campo}:' de {entidad} en {ruta} está declarado pero vacío.\n"
-            f"  Ese campo va a una columna que el partner factura: o lo "
-            f"completás entre comillas, o borrás la línea."
+            f"  Ese campo sale escrito en un anexo: o lo completás entre "
+            f"comillas, o borrás la línea."
         )
     return valor.strip()
-
-
-def _sugerencia_de_persona(identificador: str, archivo: str) -> str:
-    """Mensaje de persona sin mapear, con el YAML listo para pegar.
-
-    Lo que llega puede ser un username (timesheet) o un nombre para mostrar
-    (resumen mensual), así que el bloque sugerido cambia según cuál sea: un
-    nombre con espacios no puede ser la clave, que es siempre el username.
-    """
-    es_nombre = " " in identificador.strip()
-    clave = "AJUSTAR-username-de-kimai" if es_nombre else identificador
-    nombre = (
-        identificador.strip()
-        if es_nombre
-        else "AJUSTAR - nombre completo, va en A1 del Excel"
-    )
-    return (
-        f"Desarrollador sin mapear en {archivo}: {identificador}\n"
-        f"  Así lo identifica este export: el timesheet trae el username de "
-        f"Kimai, y el resumen mensual trae el nombre para mostrar. "
-        f"config/mapeo.yaml resuelve las dos cosas, pero ninguna persona "
-        f"coincide con eso.\n"
-        f"  Si la persona ya está cargada, hacé que su username o su "
-        f"'nombre:' coincidan exactamente con lo de arriba.\n"
-        f"  La clave de la entrada ES el 'User' que ve el partner, y el "
-        f"'mail:' es su columna E-mail: los dos hacen falta si esta persona "
-        f"exportó con el reporte de resumen mensual, que no los trae. Con el "
-        f"reporte de detalle salen de Kimai y el mapeo no interviene.\n"
-        f"  Si no está, agregá bajo personas:\n"
-        f"  {clave}:\n"
-        f'    nombre: "{nombre}"\n'
-        f'    archivo: "AJUSTAR - apellido, va en el nombre del archivo"\n'
-        f'    mail: "AJUSTAR - el mail de Kimai de esta persona"'
-    )
 
 
 def _patron(
@@ -314,9 +273,10 @@ class Mapeo:
 
         contenido = yaml.safe_load(ruta.read_text(encoding="utf-8")) or {}
 
-        # 'personas:' es opcional para quien exporta con el reporte de detalle:
-        # ese export trae el nombre y el usuario de cada desarrollador. Sigue
-        # haciendo falta para quien exporta con el resumen mensual.
+        # 'personas:' es opcional entera: quien exporta con el reporte de
+        # detalle trae su nombre y su usuario de Kimai en cada fila, y a quien
+        # exporta con el resumen mensual le falta sólo el usuario, que si no
+        # está declarado queda vacío con un aviso. Nadie frena por esto.
         if "proyectos" not in contenido:
             raise ErrorMapeo(f"A {ruta} le falta la sección 'proyectos:'")
 
@@ -328,12 +288,7 @@ class Mapeo:
                         f"A la persona '{username}' en {ruta} le falta '{campo}:'"
                     )
             personas[username] = Persona(
-                datos["nombre"],
-                datos["archivo"],
-                _texto_opcional(
-                    datos.get("mail"), "mail", f"la persona '{username}'", ruta
-                ),
-                username,
+                datos["nombre"], datos["archivo"], username
             )
 
         proyectos: dict[str, DestinoProyecto] = {}
@@ -343,16 +298,7 @@ class Mapeo:
                     raise ErrorMapeo(
                         f"Al proyecto '{codigo}' en {ruta} le falta '{campo}:'"
                     )
-            proyectos[codigo] = DestinoProyecto(
-                datos["cliente"],
-                datos["proyecto"],
-                _texto_opcional(
-                    datos.get("numero_proyecto"),
-                    "numero_proyecto",
-                    f"el proyecto '{codigo}'",
-                    ruta,
-                ),
-            )
+            proyectos[codigo] = DestinoProyecto(datos["cliente"], datos["proyecto"])
 
         return cls(
             personas,
@@ -364,51 +310,39 @@ class Mapeo:
     def proyecto_opcional(self, codigo: str) -> DestinoProyecto | None:
         """El destino declarado para ese código, o None si no está declarado.
 
-        El detalle plano usa ésta y no `resolver_proyecto`: un proyecto sin
-        mapear ya no frena nada, sale con el nombre derivado de Kimai y se
-        lista en el informe. Cada fila lleva su `Project number`, así que la
-        trazabilidad no depende del mapeo.
+        Un proyecto sin mapear no frena nada: sale con el nombre derivado del
+        texto de Kimai y queda listado en `_validacion.txt` con el bloque YAML
+        listo para pegar. Por eso no existe una versión que falle.
         """
         return self._proyectos.get(codigo)
 
-    def resolver_proyecto(
-        self, codigo: str, texto_kimai: str, archivo: str
-    ) -> DestinoProyecto:
-        destino = self._proyectos.get(codigo)
-        if destino is None:
-            alias = _alias_de_kimai(texto_kimai) or codigo
-            raise ErrorMapeo(
-                f"Proyecto sin mapear en {archivo}: [{codigo}] {alias}\n"
-                f"  Agregá a config/mapeo.yaml, bajo proyectos:\n"
-                f"  {codigo}:\n"
-                f'    cliente: "AJUSTAR - nombre del cliente para el partner"\n'
-                f'    proyecto: "{alias}"'
-            )
-        return destino
-
-    def resolver_persona(self, identificador: str, archivo: str) -> Persona:
+    def persona_opcional(self, identificador: str) -> Persona | None:
         """La persona de `personas:`, buscada por username y si no por nombre.
 
         El timesheet trae el username de Kimai; el resumen mensual trae sólo el
         nombre para mostrar. Se busca primero por username, que es la clave del
         mapeo, y recién si no aparece se busca por el 'nombre:' ya configurado.
+
+        Devuelve `None` cuando no hay **una sola** persona que corresponda: ni
+        la que no está declarada ni un nombre repetido en dos entradas frenan
+        nada. Lo único que el mapeo aporta acá es el usuario de Kimai de la
+        hoja `Datos`, y una celda vacía ahí es un hecho legítimo que C.UNIX ya
+        conoce. Quien llama avisa; no se inventa un usuario.
         """
         persona = self._personas.get(identificador)
         if persona is not None:
             return persona
 
         usernames = self._por_nombre.get(_normalizar(identificador), [])
-        if len(usernames) > 1:
-            raise ErrorMapeo(
-                f"Nombre ambiguo en {archivo}: {identificador}\n"
-                f"  En config/mapeo.yaml hay más de una persona con ese "
-                f"'nombre:' ({', '.join(sorted(usernames))}).\n"
-                f"  Este export es un resumen mensual: no trae el username, "
-                f"sólo el nombre, así que no hay forma de saber cuál de las "
-                f"dos es sin inventar.\n"
-                f"  Cambiá el 'nombre:' de una de ellas para que no se repita."
-            )
-        if usernames:
+        if len(usernames) == 1:
             return self._personas[usernames[0]]
+        return None
 
-        raise ErrorMapeo(_sugerencia_de_persona(identificador, archivo))
+    def usernames_con_el_nombre(self, identificador: str) -> tuple[str, ...]:
+        """Los usernames declarados con ese 'nombre:'. Vacío si ninguno.
+
+        Más de uno significa que el nombre está repetido en `personas:` y que
+        no hay forma de saber cuál es sin inventar. Lo usa el aviso, para
+        poder nombrarlos.
+        """
+        return tuple(sorted(self._por_nombre.get(_normalizar(identificador), [])))

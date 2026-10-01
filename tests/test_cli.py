@@ -459,27 +459,97 @@ def test_las_tablas_del_informe_cierran_con_el_total_del_mes(tmp_path):
 # --- Registros sin descripción ----------------------------------------------
 
 
-def test_un_registro_sin_descripcion_produce_el_aviso(tmp_path):
+MAPEO_DE_LAUTARO = (
+    "personas:\n  lzalazar:\n"
+    '    nombre: "Lautaro Zalazar"\n    archivo: "L Zalazar"\n'
+    "proyectos:\n  GI2680001:\n"
+    '    cliente: "C.UNIX"\n    proyecto: "Victorius 3"\n'
+)
+
+
+def resumen_mensual(tmp_path, mapeo):
+    """Un mes cuyo único export es el resumen mensual de Lautaro (9 h)."""
     raiz = preparar(tmp_path, ("lautaro.xlsx",))
     shutil.copy(
         FIXTURES / "kimai-resumen-mensual-lautaro.xlsx",
         raiz / "input" / "2026-08" / "lautaro.xlsx",
     )
-    escribir_mapeo(
-        raiz,
-        "personas:\n  lzalazar:\n"
-        '    nombre: "Lautaro Zalazar"\n    archivo: "L Zalazar"\n'
-        '    mail: "lautaro.zalazar@cunix.net"\n'
-        "proyectos:\n  GI2680001:\n"
-        '    cliente: "C.UNIX"\n    proyecto: "Victorius 3"\n'
-        '    numero_proyecto: "GI2680001"\n',
-    )
+    escribir_mapeo(raiz, mapeo)
+    return raiz
+
+
+def usuarios_de_la_hoja_datos(raiz, nombre=DETALLE):
+    datos = openpyxl.load_workbook(raiz / "output" / "2026-08" / nombre)["Datos"]
+    return {
+        datos.cell(f, 1).value: datos.cell(f, 3).value
+        for f in range(8, 23)
+        if datos.cell(f, 1).value
+    }
+
+
+def test_un_registro_sin_descripcion_produce_el_aviso(tmp_path):
+    raiz = resumen_mensual(tmp_path, MAPEO_DE_LAUTARO)
     procesar_mes("2026-08", raiz)
     texto = informe(raiz)
     assert "Registros sin descripción" in texto
     assert "Lautaro Zalazar:" in texto
     # No frena: los anexos se generan igual.
     assert (raiz / "output" / "2026-08" / DETALLE).is_file()
+
+
+# --- Personas sin usuario de Kimai ------------------------------------------
+# El mapeo ya no declara `mail:` ni `numero_proyecto:`: ninguno de los dos
+# anexos tiene esas columnas. Lo único que aporta para el resumen mensual es
+# el usuario de la hoja «Datos», y que falte avisa en vez de frenar.
+
+
+def test_una_persona_sin_mapear_del_resumen_mensual_entra_igual(tmp_path):
+    raiz = resumen_mensual(
+        tmp_path,
+        'proyectos:\n  GI2680001:\n    cliente: "C.UNIX"\n'
+        '    proyecto: "Victorius 3"\n',
+    )
+    assert procesar_mes("2026-08", raiz) == 0
+
+    hoja = hoja_detalle(raiz)
+    assert len(filas_de(hoja)) == 4
+    assert round(horas_de(hoja), 2) == 9.0
+    personas = {hoja.cell(f, detalle_xlsx.COL_PERSONA).value for f in filas_de(hoja)}
+    assert personas == {"Lautaro Zalazar"}
+
+
+def test_una_persona_sin_mapear_queda_sin_usuario_en_la_hoja_datos(tmp_path):
+    raiz = resumen_mensual(
+        tmp_path,
+        'proyectos:\n  GI2680001:\n    cliente: "C.UNIX"\n'
+        '    proyecto: "Victorius 3"\n',
+    )
+    procesar_mes("2026-08", raiz)
+    # Celda vacía, igual que la de quien todavía no tiene usuario de Kimai.
+    assert usuarios_de_la_hoja_datos(raiz) == {"Lautaro Zalazar": None}
+
+
+def test_una_persona_sin_mapear_se_avisa_en_el_informe(tmp_path):
+    raiz = resumen_mensual(
+        tmp_path,
+        'proyectos:\n  GI2680001:\n    cliente: "C.UNIX"\n'
+        '    proyecto: "Victorius 3"\n',
+    )
+    procesar_mes("2026-08", raiz)
+    texto = informe(raiz)
+    assert "Personas sin usuario de Kimai" in texto
+    assert "Lautaro Zalazar" in texto
+    assert "su propio usuario" in texto
+    assert "NO FRENA NADA" in texto
+
+
+def test_sin_mail_ni_numero_de_proyecto_el_mes_sale_completo(tmp_path):
+    """Los dos campos que el mapeo dejó de pedir: su ausencia no se nota."""
+    raiz = resumen_mensual(tmp_path, MAPEO_DE_LAUTARO)
+    assert procesar_mes("2026-08", raiz) == 0
+    assert round(horas_de(hoja_detalle(raiz)), 2) == 9.0
+    assert usuarios_de_la_hoja_datos(raiz) == {"Lautaro Zalazar": "lzalazar"}
+    assert "Personas sin usuario de Kimai" not in informe(raiz)
 
 
 # --- Fuentes manuales -------------------------------------------------------

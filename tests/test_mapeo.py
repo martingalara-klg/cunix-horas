@@ -25,44 +25,40 @@ proyectos:
 
 
 
-def test_resolver_proyecto_conocido():
-    destino = cargar().resolver_proyecto("CO2610170", "[CO2610170] Aduana", "x.xlsx")
+def test_proyecto_conocido():
+    destino = cargar().proyecto_opcional("CO2610170")
     assert destino.cliente == "Servicio Nacional de Aduanas"
     assert destino.proyecto == "Subastas"
 
 
-def test_resolver_proyecto_conserva_acentos():
-    destino = cargar().resolver_proyecto("CO2510115", "[CO2510115] ISPCH", "x.xlsx")
+def test_proyecto_conserva_acentos():
+    destino = cargar().proyecto_opcional("CO2510115")
     assert destino.cliente == "Instituto de Salud Pública de Chile"
 
 
-def test_resolver_persona_conocida():
-    persona = cargar().resolver_persona("mzalazar", "x.xlsx")
+def test_persona_conocida():
+    persona = cargar().persona_opcional("mzalazar")
     assert persona.nombre == "Matias Zalazar"
     assert persona.archivo == "Zalazar"
 
 
-def test_proyecto_desconocido_sugiere_la_linea_yaml():
-    texto = "[PR2610199] MINVU-Portal2 | Subsecretaría de Vivienda - Portal"
-    with pytest.raises(ErrorMapeo) as excepcion:
-        cargar().resolver_proyecto("PR2610199", texto, "kimai-mzalazar.xlsx")
-    mensaje = str(excepcion.value)
-    assert "PR2610199" in mensaje
-    assert "kimai-mzalazar.xlsx" in mensaje
-    assert "config/mapeo.yaml" in mensaje
-    assert "MINVU-Portal2" in mensaje
-    assert "cliente:" in mensaje
-    assert "proyecto:" in mensaje
+def test_un_proyecto_desconocido_no_frena_la_busqueda():
+    """Reemplaza al viejo `resolver_proyecto`, que lanzaba con el YAML pegable.
+
+    El bloque pegable sigue existiendo: lo arma el informe de validación, que
+    es donde se lee sin frenar nada (ver test_cli).
+    """
+    assert cargar().proyecto_opcional("PR2610199") is None
 
 
-def test_persona_desconocida_sugiere_la_linea_yaml():
-    with pytest.raises(ErrorMapeo) as excepcion:
-        cargar().resolver_persona("fdodera", "kimai-fdodera.xlsx")
-    mensaje = str(excepcion.value)
-    assert "fdodera" in mensaje
-    assert "config/mapeo.yaml" in mensaje
-    assert "nombre:" in mensaje
-    assert "archivo:" in mensaje
+def test_una_persona_desconocida_no_frena_la_busqueda():
+    """Reemplaza al viejo `resolver_persona`, que lanzaba ErrorMapeo.
+
+    El usuario de Kimai es lo único que el mapeo aporta acá, y una celda
+    vacía en la hoja «Datos» no vale frenar una entrega: el aviso con el YAML
+    pegable lo arma `completado` (ver test_completado).
+    """
+    assert cargar().persona_opcional("fdodera") is None
 
 
 def test_falla_si_el_yaml_no_existe(tmp_path):
@@ -86,99 +82,6 @@ def test_falla_si_a_un_proyecto_le_falta_el_cliente(tmp_path):
         Mapeo.cargar(ruta)
 
 
-def test_proyecto_desconocido_sugiere_yaml_pegable(tmp_path):
-    """Verifica que el YAML sugerido en el error es pegable y válido."""
-    texto = "[PR2610199] MINVU-Portal2 | Subsecretaría de Vivienda - Portal"
-    with pytest.raises(ErrorMapeo) as excepcion:
-        cargar().resolver_proyecto("PR2610199", texto, "test.xlsx")
-
-    mensaje = str(excepcion.value)
-    # Extrae las líneas del YAML sugerido (desde la clave hasta el final)
-    # Busca líneas que comienzan con "  " (2 espacios) o más
-    lineas = mensaje.split("\n")
-    inicio_bloque = None
-    for i, linea in enumerate(lineas):
-        if "PR2610199:" in linea:
-            inicio_bloque = i
-            break
-
-    assert inicio_bloque is not None, "No se encontró la clave en el mensaje"
-
-    # Extrae el bloque YAML sugerido
-    bloque_yaml = "\n".join(lineas[inicio_bloque:])
-
-    # Crea un archivo de prueba con la estructura base
-    ruta = tmp_path / "test.yaml"
-    contenido_base = """personas:
-  mzalazar:
-    nombre: "Test"
-    archivo: "Test"
-
-proyectos:
-  CO2610170:
-    cliente: "Existente"
-    proyecto: "Existente"
-"""
-    ruta.write_text(contenido_base + bloque_yaml + "\n", encoding="utf-8")
-
-    # Carga el YAML y verifica que la entrada nueva está como hermana
-    datos = yaml.safe_load(ruta.read_text(encoding="utf-8"))
-    assert "PR2610199" in datos["proyectos"], "La clave nueva no aparece en proyectos"
-    assert isinstance(
-        datos["proyectos"]["PR2610199"], dict
-    ), "La entrada no es un dict"
-    assert "cliente" in datos["proyectos"]["PR2610199"]
-    assert "proyecto" in datos["proyectos"]["PR2610199"]
-
-
-def test_persona_desconocida_sugiere_yaml_pegable(tmp_path):
-    """Verifica que el YAML sugerido en el error es pegable y válido."""
-    with pytest.raises(ErrorMapeo) as excepcion:
-        cargar().resolver_persona("fjohnson", "test.xlsx")
-
-    mensaje = str(excepcion.value)
-    # Extrae las líneas del YAML sugerido
-    lineas = mensaje.split("\n")
-    inicio_bloque = None
-    for i, linea in enumerate(lineas):
-        if "fjohnson:" in linea:
-            inicio_bloque = i
-            break
-
-    assert inicio_bloque is not None, "No se encontró la clave en el mensaje"
-
-    # Extrae el bloque YAML sugerido
-    bloque_yaml = "\n".join(lineas[inicio_bloque:])
-
-    # Crea un archivo de prueba con la estructura base
-    # Importante: insertar el bloque al final de la sección personas, antes de proyectos
-    ruta = tmp_path / "test.yaml"
-    contenido_base = """personas:
-  mzalazar:
-    nombre: "Test"
-    archivo: "Test"
-"""
-    # Agrega el nuevo bloque a la sección personas
-    contenido = contenido_base + bloque_yaml + "\n"
-    # Agrega la sección proyectos después
-    contenido += """
-proyectos:
-  CO2610170:
-    cliente: "Test"
-    proyecto: "Test"
-"""
-    ruta.write_text(contenido, encoding="utf-8")
-
-    # Carga el YAML y verifica que la entrada nueva está como hermana
-    datos = yaml.safe_load(ruta.read_text(encoding="utf-8"))
-    assert "fjohnson" in datos["personas"], "La clave nueva no aparece en personas"
-    assert isinstance(
-        datos["personas"]["fjohnson"], dict
-    ), "La entrada no es un dict"
-    assert "nombre" in datos["personas"]["fjohnson"]
-    assert "archivo" in datos["personas"]["fjohnson"]
-
-
 # --- El resumen mensual trae el nombre para mostrar, no el username --------
 
 
@@ -196,7 +99,7 @@ def _mapeo_con(personas: str, tmp_path):
 
 def test_resolver_persona_por_el_nombre_para_mostrar():
     """El resumen mensual identifica al dev por el 'nombre:' del mapeo."""
-    persona = cargar().resolver_persona("Matias Zalazar", "resumen.xlsx")
+    persona = cargar().persona_opcional("Matias Zalazar")
     assert persona.archivo == "Zalazar"
 
 
@@ -211,11 +114,11 @@ def test_el_username_gana_sobre_el_nombre(tmp_path):
         '    archivo: "Otro"\n',
         tmp_path,
     )
-    assert mapeo.resolver_persona("Matias Zalazar", "x.xlsx").archivo == "Otro"
+    assert mapeo.persona_opcional("Matias Zalazar").archivo == "Otro"
 
 
 def test_el_nombre_se_compara_sin_importar_espacios_ni_mayusculas():
-    persona = cargar().resolver_persona("  matias   zalazar ", "resumen.xlsx")
+    persona = cargar().persona_opcional("  matias   zalazar ")
     assert persona.archivo == "Zalazar"
 
 
@@ -229,38 +132,25 @@ def test_dos_personas_con_el_mismo_nombre_no_eligen_una(tmp_path):
         '    archivo: "Zalazar M"\n',
         tmp_path,
     )
-    with pytest.raises(ErrorMapeo) as excepcion:
-        mapeo.resolver_persona("Matias Zalazar", "resumen.xlsx")
-    mensaje = str(excepcion.value)
-    assert "ambiguo" in mensaje
-    assert "mzalazar" in mensaje
-    assert "mzalazar2" in mensaje
-
-
-def test_un_nombre_sin_mapear_sugiere_un_yaml_pegable_con_ese_nombre(tmp_path):
-    with pytest.raises(ErrorMapeo) as excepcion:
-        cargar().resolver_persona("Lautaro Zalazar", "resumen.xlsx")
-    mensaje = str(excepcion.value)
-    assert "Lautaro Zalazar" in mensaje
-    assert "config/mapeo.yaml" in mensaje
-
-    # El bloque sugerido tiene que ser YAML pegable bajo personas:
-    lineas = mensaje.split("\n")
-    inicio = next(
-        i for i, linea in enumerate(lineas) if "AJUSTAR-username-de-kimai:" in linea
+    # No elige ninguna, y tampoco frena: quien llama avisa con los dos
+    # usernames a la vista (ver test_completado).
+    assert mapeo.persona_opcional("Matias Zalazar") is None
+    assert mapeo.usernames_con_el_nombre("Matias Zalazar") == (
+        "mzalazar",
+        "mzalazar2",
     )
-    bloque = "\n".join(lineas[inicio:])
-    ruta = tmp_path / "pegado.yaml"
-    ruta.write_text("personas:\n" + bloque + "\n", encoding="utf-8")
-    datos = yaml.safe_load(ruta.read_text(encoding="utf-8"))
-    entrada = next(iter(datos["personas"].values()))
-    assert entrada["nombre"] == "Lautaro Zalazar"
-    assert "archivo" in entrada
+
+
+def test_un_nombre_sin_mapear_no_resuelve_ninguna_persona():
+    """El aviso con el YAML pegable lo arma `completado` (ver test_completado)."""
+    assert cargar().persona_opcional("Lautaro Zalazar") is None
+    assert cargar().usernames_con_el_nombre("Lautaro Zalazar") == ()
 
 
 # --- 'personas:' dejó de ser obligatorio ------------------------------------
-# El archivo que recibe el partner trae el nombre, el usuario y el mail de
-# cada desarrollador tal como vienen de Kimai: el mapeo ya no los necesita.
+# El reporte de detalle trae el nombre y el usuario de cada desarrollador tal
+# como vienen de Kimai, y lo único que el mapeo le aporta al resumen mensual
+# —el usuario de la hoja «Datos»— no frena nada si falta.
 
 
 def test_el_mapeo_carga_sin_la_seccion_personas(tmp_path):
