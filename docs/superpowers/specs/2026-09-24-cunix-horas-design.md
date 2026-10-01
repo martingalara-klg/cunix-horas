@@ -333,7 +333,8 @@ grande.
 | Qué | Cómo sale |
 |---|---|
 | Encabezado, período | automático |
-| Contrato de fecha, fecha de emisión | configurables; si no, queda `[DD/MM/AAAA]` |
+| Fecha de emisión | configurable; si no, queda `[DD/MM/AAAA]` |
+| Contrato de fecha | la completa C.UNIX: queda `[DD/MM/AAAA]` a propósito |
 | Tabla 0, plazo de entrega | configurable; si no, queda `[●]` |
 | Tabla 1, horas e importe por proyecto | automático |
 | Tabla 2, horas por persona, días y promedio | automático |
@@ -732,14 +733,11 @@ TDD, con `pytest`, sobre fixtures reales. `python -m pytest -q`.
 
 ## 9. Lo que queda pendiente
 
-1. **La plantilla del Anexo II-A arrastra dos datos de agosto de 2026**, los dos
-   en partes que arma C.UNIX y que se dejaron intactas a propósito:
-   `Resumen!B5` tiene `306` fijo (es la celda «Horas en Kimai según C.UNIX»,
-   que él carga a mano, no una fórmula) y la hoja `Instrucciones` describe
-   agosto como ejemplo. Hay que resolverlo con C.UNIX antes de que confunda a
-   alguien.
-2. **`contrato_de_fecha` sigue sin confirmarse** contra el contrato, así que el
-   informe sale todos los meses con `[DD/MM/AAAA]` a la vista.
+1. **La hoja `Instrucciones` de la plantilla del Anexo II-A describe agosto de
+   2026 como ejemplo.** Es texto de C.UNIX y no afecta ningún número, pero se
+   arrastra a todos los meses. Conviene resolverlo con ellos antes de que
+   confunda a alguien. (`Resumen!B5`, la celda «Horas en Kimai según C.UNIX»,
+   sí quedó vacía en la plantilla: la carga C.UNIX al conciliar.)
 
 ## 10. Fuera de alcance (posible trabajo futuro)
 

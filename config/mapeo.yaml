@@ -64,10 +64,10 @@ anexos:
   # Plazo que KLG se compromete a cumplir, en la tabla de condiciones del
   # informe. Confirmado por el dueno el 2026-09-30.
   dias_habiles_entrega: 5
-  # Sin confirmar contra el contrato: el informe sale con [DD/MM/AAAA] a la
-  # vista para completarlo a mano. Cuando esten, se escriben aca entre
-  # comillas y salen solos todos los meses.
-  # contrato_de_fecha: "01/01/2026"
+  # contrato_de_fecha: la completa C.UNIX, no KLG. Se deja sin declarar y el
+  # informe sale con [DD/MM/AAAA] en ese lugar, que es lo correcto.
+  # fecha_de_emision: si siempre emitis en la misma fecha del mes, declarala
+  # aca entre comillas y sale sola; si no, se completa a mano.
   # fecha_de_emision: "05/10/2026"
   # Si alguien del equipo no es "Desarrollador", va aca:
   # perfiles:

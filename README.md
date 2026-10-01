@@ -83,7 +83,10 @@ Abrí el **Anexo II** (el Word) y completá:
 | **Estado al cierre** | Tabla 3, última columna: `Terminado`, `En curso`, `En revisión de C.UNIX` o `Bloqueado`. Sale con la marca `[●]`. |
 | **Observaciones** | Tabla 4, las tres filas. Salen con `[●]`. Si no hay nada que decir, «Sin novedades». |
 | **Firmas** | Nombre, cargo y fecha de quien emite. |
-| **Contrato de fecha y fecha de emisión** | Salen como `[DD/MM/AAAA]` mientras no estén en `config/mapeo.yaml`. |
+| **Fecha de emisión** | Sale como `[DD/MM/AAAA]`. Si siempre emitís en la misma fecha del mes, ponela en `config/mapeo.yaml` y sale sola. |
+
+La **fecha del contrato** también sale como `[DD/MM/AAAA]`, pero esa **no la
+completás vos**: la llena C.UNIX. Queda en blanco a propósito.
 
 Todo lo que quede con `[●]` o con `[DD/MM/AAAA]` es, justamente, lo que falta
 completar: está a la vista a propósito.
@@ -180,7 +183,7 @@ Todo es opcional. Un mes normal no obliga a tocar nada.
 anexos:
   perfil_por_defecto: "Desarrollador"
   dias_habiles_entrega: 5          # el plazo de la tabla de condiciones
-  contrato_de_fecha: "01/01/2026"  # si no está, queda [DD/MM/AAAA]
+  # contrato_de_fecha: la llena C.UNIX; normalmente se deja sin declarar
   fecha_de_emision: "05/10/2026"   # idem
 
 proyectos:
