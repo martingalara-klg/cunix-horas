@@ -6,8 +6,8 @@ proyecto y una por actividad; y una fila `Total` al final.
 
 Tres cosas hay que resolver acá, y ninguna se asume: se detectan por archivo.
 
-1. **Qué es cada fila.** Igual que en `escritor_excel`, se distinguen por
-   estructura: la de cliente tiene las celdas de día mergeadas, la de
+1. **Qué es cada fila.** Se distinguen por estructura y no por posición:
+   la de cliente tiene las celdas de día mergeadas, la de
    proyecto trae el código entre corchetes y las horas por día, y la de
    actividad viene abajo. Sólo las de actividad emiten registros: las de
    proyecto son subtotales y duplicarían las horas.

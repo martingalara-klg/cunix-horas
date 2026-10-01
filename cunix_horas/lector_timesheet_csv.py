@@ -44,8 +44,8 @@ COL_USERNAME = "User"
 COL_PROYECTO = "Project"
 COL_ACTIVIDAD = "Activity"
 
-# Columnas del detalle plano que ahora recibe el partner. Acá las columnas se
-# leen por nombre, así que una que falte no corre a las demás: queda vacía.
+# Las columnas del reporte de detalle. Acá se leen por nombre, así que una que
+# falte no corre a las demás: queda vacía.
 COL_HORA_INICIO = "From"
 COL_NOMBRE = "Name"
 COL_EMAIL = "E-mail"

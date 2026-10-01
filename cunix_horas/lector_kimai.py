@@ -2,7 +2,7 @@
 
 El dueño exporta desde Kimai con distintos reportes, y cada uno da un archivo
 distinto. `leer()` mira el archivo y elige el lector; los tres devuelven
-`list[Registro]`, así que agregador, validador y escritor no se enteran.
+`list[Registro]`, así que el resto del pipeline no se entera del formato.
 
     .csv                    -> timesheet plano en CSV
     .xlsx con A1='Date'     -> timesheet plano en XLSX

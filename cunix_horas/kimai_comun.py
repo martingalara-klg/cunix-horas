@@ -48,9 +48,9 @@ class ErrorLectura(Exception):
 class Registro:
     """Un registro de tiempo individual de Kimai.
 
-    Los primeros cinco campos son los que necesitaba el Excel pivoteado por
-    desarrollador. Los de abajo son el resto de lo que trae el reporte de
-    detalle de Kimai.
+    Los primeros cinco campos son los mínimos para imputar horas: cuándo,
+    cuántas, de quién, de qué proyecto y de qué actividad. Los de abajo son el
+    resto de lo que trae el reporte de detalle de Kimai.
 
     `email` y `numero_proyecto` se conservan tal como vienen del export, pero
     hoy ningún anexo los escribe: el Anexo II-A no tiene esas columnas. Se
@@ -67,8 +67,8 @@ class Registro:
     actividad: str
     # Al final para no romper las construcciones posicionales existentes.
     texto_proyecto: str = ""
-    # Hora de inicio (columna `From` de Kimai). El entregable la combina con
-    # `fecha` en una sola celda de fecha y hora.
+    # Hora de inicio (columna `From` de Kimai). Va a la columna `Inicio` de la
+    # hoja `Detalle`, y de ella sale `Fin` = `Inicio` + `horas`.
     hora_inicio: time | None = None
     # Nombre para mostrar ('Matias Zalazar'), distinto de `username`
     # ('mzalazar'). Los dos viajan: el username es la clave del mapeo.
@@ -78,7 +78,8 @@ class Registro:
     descripcion: str = ""
     # El `Project number` de Kimai, que **no** es el código entre corchetes:
     # el proyecto '[AD2690002] ...' tiene número de proyecto '210'. El código
-    # es la clave del mapeo; el número va tal cual al entregable.
+    # es la clave del mapeo; el número hoy no se escribe en ningún anexo y se
+    # conserva sólo porque el export lo trae.
     numero_proyecto: str = ""
     # Texto crudo de la columna `Customer`, por el mismo motivo por el que se
     # conserva el del proyecto: de ahí sale el nombre a mostrar cuando el
@@ -102,8 +103,8 @@ class HojaXlsx:
 
     `filas_con_dias_mergeados` son los números de fila cuyas celdas de día
     están mergeadas. Es la señal por la que el resumen mensual distingue la
-    fila de cliente, igual que `escritor_excel._fila_cliente` del lado de la
-    escritura.
+    fila de cliente de la de proyecto: se decide por estructura, no por
+    posición.
     """
 
     filas: tuple[tuple[int, dict[str, str]], ...]

@@ -43,7 +43,8 @@
 #            clave = username de Kimai (columna F del export plano). Es lo que
 #            va en la columna "Usuario Kimai" de la hoja Datos.
 #
-#            No hay `mail:`: ninguno de los dos anexos tiene columna de mail.
+#            Cada persona lleva un solo campo: `nombre:`. Es el unico que
+#            existe y el unico obligatorio.
 #
 # proyectos: clave = codigo entre corchetes del campo Project (columna J).
 #            Se usa el codigo y no el nombre porque el codigo no cambia aunque
@@ -51,10 +52,10 @@
 #            `proyecto` es el nombre que ve C.UNIX, y TIENE QUE ESCRIBIRSE
 #            IGUAL que en la hoja "Datos" de la plantilla del Anexo II-A: es
 #            por ese nombre que el informe le encuentra el valor hora.
+#            Cada proyecto lleva dos campos: `cliente:` y `proyecto:`.
 #            Un proyecto que no este aca NO frena nada: sale con el nombre que
 #            trae Kimai y queda listado en _validacion.txt con el bloque listo
 #            para pegar.
-#            No hay `numero_proyecto:`: el Anexo II-A no tiene esa columna.
 
 anexos:
   archivo_detalle: "Anexo-II-A-Detalle-horas-KLG-{periodo}.xlsx"

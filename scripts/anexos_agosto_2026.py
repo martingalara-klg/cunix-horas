@@ -1,5 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Edicion puntual de los dos anexos de agosto 2026 que C.UNIX envio como ejemplo.
+"""Artefacto historico: regenera lo que KLG entrego en agosto de 2026.
+
+ESTO NO ES EL CAMINO NORMAL. El camino normal es `python -m cunix_horas AAAA-MM`,
+que arma los dos anexos desde los exports de Kimai y las plantillas vacias de
+`templates/`. Este script existe porque en agosto de 2026 la herramienta
+todavia no generaba los anexos: ese mes se entrego EDITANDO el ejemplo que
+mando C.UNIX. Se conserva versionado para poder auditar y reproducir
+exactamente lo entregado, no para usarlo de septiembre en adelante.
 
 QUE HACE
     Lee los dos anexos que mando C.UNIX, que viven en

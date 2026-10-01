@@ -65,11 +65,13 @@ python -m cunix_horas 2026-09
 
 ### 4. Leer `output/2026-09/_validacion.txt` ANTES de mandar nada
 
-Es el informe de la corrida y alcanza por sí solo para decidir. Lo primero que
-dice es **quiénes entraron a los anexos**: contá esa lista contra tu equipo.
-Después vienen, si corresponde, los archivos que no entraron y por qué, los
-proyectos sin valor hora, los registros sin descripción y los avisos de carga
-(más de 12 h en un día, horas en fin de semana, días hábiles sin carga).
+Describe **lo que quedó en la carpeta** —que es lo que vas a adjuntar— y
+alcanza por sí solo para decidir. Lo primero que dice es **quiénes entraron a
+los anexos**: contá esa lista contra tu equipo. Después vienen, si corresponde,
+los archivos que no entraron y por qué, los archivos de la carpeta que esta
+corrida no generó, los proyectos sin valor hora, los registros sin descripción
+y los avisos de carga (más de 12 h en un día, horas en fin de semana, días
+hábiles sin carga, registros fuera del mes).
 
 ### 5. Completar a mano lo que la herramienta no puede saber
 
@@ -212,24 +214,25 @@ personas:
     nombre: "Alexis Carnero"       # exacto como lo muestra Kimai
 ```
 
-Si no está
-declarada, **tampoco frena nada**: esa persona entra con todas sus horas y la
-columna «Usuario Kimai» de la hoja `Datos` le queda vacía, igual que a quien
-todavía no tiene usuario. `_validacion.txt` la nombra y explica que C.UNIX
+Si no está declarada, **tampoco frena nada**: esa persona entra con todas sus
+horas y la columna «Usuario Kimai» de la hoja `Datos` le queda vacía, igual que
+a quien todavía no tiene usuario. `_validacion.txt` la nombra y explica que C.UNIX
 pide que cada uno cargue sus horas con su propio usuario.
 
-Las personas tampoco llevan `archivo:` (el apellido con que se nombraba el
-Excel de cada desarrollador): ya no se genera ese archivo.
+### Cinco campos que ya no existen
 
-Ni las personas ni los proyectos llevan `mail:` o `numero_proyecto:`. Esos dos
-campos existían para un entregable anterior, que era un archivo plano con
-columnas `E-mail` y `Project number`. **Los anexos de hoy no tienen esas
-columnas** —el Anexo II-A va `Fecha | Inicio | Fin | Persona | Proyecto |
-Descripción | Horas | Alertas | Revisión C.UNIX | Horas aprobadas | Horas a
-pagar | Observación C.UNIX | Día nuevo | Nota KLG`—, así que pedirlos sólo
-servía para trabar una entrega por un dato que después no se escribía en
-ningún lado. Si te quedaron esas líneas, o `archivo:`, en tu `mapeo.yaml` viejo, se ignoran;
-podés borrarlas.
+Si tenés un `mapeo.yaml` de antes, puede traer `mail:`, `numero_proyecto:`,
+`archivo:`, `actividad:` o `archivo_salida:`. **Los cinco se ignoran al cargar:
+podés borrar esas líneas.** Eran de los dos entregables anteriores —el Excel
+pivoteado por desarrollador y el archivo plano `Horas KLG-<Mes><Año>.xlsx`—,
+que C.UNIX dejó de recibir.
+
+Los anexos de hoy no tienen dónde escribir nada de eso: el Anexo II-A va
+`Fecha | Inicio | Fin | Persona | Proyecto | Descripción | Horas | Alertas |
+Revisión C.UNIX | Horas aprobadas | Horas a pagar | Observación C.UNIX | Día
+nuevo | Nota KLG`. `mail:` y `numero_proyecto:`, además, **frenaban la entrega
+entera** si faltaban: trababan un mes por un dato que después no se escribía en
+ningún lado.
 
 ## Qué frena una entrega y qué sólo se avisa
 
@@ -242,7 +245,14 @@ podés borrarlas.
   → **no se genera ningún anexo**;
 - el Anexo II-A escrito cuyas horas no coinciden con las de los exports →
   **no se genera ese archivo**;
-- `config/mapeo.yaml` roto o con un campo declarado en blanco.
+- un mes que no entra en la plantilla (más de 600 registros, o más de 15
+  personas) → **no se genera ese archivo**, y hay que pedirle a C.UNIX una
+  plantilla más grande;
+- un anexo que tenés abierto y no se puede escribir → **no se genera ese
+  archivo**; cerralo y volvé a correr;
+- `config/mapeo.yaml` roto o con un campo declarado en blanco;
+- que falte una de las dos plantillas de `templates/`, o la carpeta
+  `input/<mes>/`.
 
 **Sólo avisa** en `_validacion.txt`, y la entrega sale igual:
 
@@ -348,7 +358,7 @@ output/AAAA-MM/            lo que se entrega (se versiona con `git add -f`)
 cunix_horas/               el código
 scripts/                   los scripts de un mes concreto
 tests/                     los tests
-docs/superpowers/          spec y plan de implementación
+docs/superpowers/specs/    el diseño: qué hace, y por qué está hecho así
 ```
 
 ### `input/2026-08/manual/`

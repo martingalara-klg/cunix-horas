@@ -29,7 +29,7 @@ from cunix_horas.anexos import (
 )
 
 # Prefijo '[codigo] ' del texto crudo de Kimai. Se saca para derivar el nombre
-# que ve el partner cuando el proyecto no esta declarado en el mapeo.
+# que ve C.UNIX cuando el proyecto no esta declarado en el mapeo.
 _PREFIJO_CODIGO = re.compile(r"^\s*\[[^\]]+\]\s*")
 
 
@@ -82,7 +82,7 @@ def _sin_codigo(texto: str) -> str:
 
 
 def derivar_proyecto(texto_kimai: str) -> str:
-    """El nombre de proyecto que ve el partner cuando no está mapeado.
+    """El nombre de proyecto que ve C.UNIX cuando no está mapeado.
 
     '[AD2690002] C.UNIX - Internos | C.UNIX - VictoriusCP2' -> 'C.UNIX - Internos'
 

@@ -8,13 +8,13 @@ Una fila sin fecha pero con datos no se saltea: son horas que no llegarían al
 Excel del cliente y nadie se enteraría. Se falla nombrando el archivo y la
 fila. Una fila completamente vacía sí se saltea, que no pierde nada.
 
-Desde que el partner pide el detalle plano se leen también las columnas
-`From` (B), `Name` (E), `E-mail` (G), `Customer` (I), `Description` (L) y
-`Project number` (R). Ojo con las dos últimas: `Description` viene vacía en
-la mayoría de los registros y eso es válido, y `Project number` **no** es el
-código entre corchetes de `Project` (el proyecto `[AD2690002] ...` tiene
-número `210`). Los dos se conservan: el del corchete es la clave del mapeo y
-el número va tal cual al archivo del partner.
+Además de las cinco columnas mínimas se leen también `From` (B), `Name` (E),
+`E-mail` (G), `Customer` (I), `Description` (L) y `Project number` (R). Ojo
+con las dos últimas: `Description` viene vacía en la mayoría de los registros
+y eso es válido, y `Project number` **no** es el código entre corchetes de
+`Project` (el proyecto `[AD2690002] ...` tiene número `210`). El del corchete
+es la clave del mapeo; el número y el mail se conservan porque el export los
+trae, pero hoy ningún anexo los escribe.
 """
 from __future__ import annotations
 
@@ -52,8 +52,8 @@ ENCABEZADOS_ESPERADOS = {
     COL_ACTIVIDAD: "Activity",
 }
 
-# Las que agregó el entregable nuevo (detalle plano). Como este lector toma
-# las columnas por posición, una versión de Kimai que las reordene metería el
+# Las demás columnas del reporte de detalle. Como este lector toma las
+# columnas por posición, una versión de Kimai que las reordene metería el
 # dato equivocado en cada una. Por eso se verifican igual, pero **sólo si la
 # columna existe en la fila 1**: un archivo que directamente no las trae se
 # lee con esos campos vacíos, en vez de fallar entero.

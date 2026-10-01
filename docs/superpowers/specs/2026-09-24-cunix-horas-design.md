@@ -1,551 +1,748 @@
-# cunix-horas — Conversión de exports Kimai a Excel mensual del partner
+# cunix-horas — Diseño del sistema
 
 **Fecha:** 2026-09-24
-**Estado:** Implementado. Actualizado el 2026-09-28 con el cambio de entregable (del Excel pivoteado al archivo único con el detalle plano) y el 2026-10-01 con la promoción de los dos anexos de C.UNIX a entregable de la herramienta.
+**Última revisión:** 2026-10-01 — reescrita para describir el sistema tal como es hoy: los dos anexos de C.UNIX.
+**Estado:** Implementado y en uso.
 
-> **El entregable de hoy son los dos anexos de C.UNIX.** `python -m cunix_horas AAAA-MM` arma el **Anexo II** (informe mensual, Word) y el **Anexo II-A** (detalle, Excel) a partir de las plantillas vacías de `templates/`, que nunca se modifican. El consolidado plano que describe el resto de esta spec **se eliminó** (`detalle.py`, `escritor_detalle.py` y sus tests): de la etapa anterior sobreviven, sin cambios, la lectura de los exports de Kimai (`lector_*.py`, `kimai_comun.py`), el completado desde el mapeo (`completado.py`) y los avisos de carga (`validador.py`). Lo que esta spec dice de la **lectura** sigue vigente; lo que dice del **entregable** quedó viejo y hay que leerlo contra el README.
->
-> Módulos nuevos: `anexos.py` (período, nombres y formato de números), `filas_anexo.py` (las filas de la hoja `Detalle` y las tres tablas del informe), `fuentes_manuales.py` (las planillas de `input/<mes>/manual/`, configurables en `config/mapeo.yaml`), `escritor_anexo_detalle.py` y `escritor_anexo_informe.py`.
->
-> `scripts/anexos_agosto_2026.py` **se conserva**: agosto de 2026 se entregó corrigiendo el ejemplo que mandó C.UNIX, no armándolo desde cero, y ese script es lo único que lo reproduce tal cual. Desde la promoción importa del paquete el formato de números, la edición de Word y la reinyección del `extLst`, así que ya no duplica ese código.
+Este documento describe **lo que la herramienta hace hoy** y **por qué está
+hecha así**. La fuente de verdad es el código (`cunix_horas/`); esta spec
+existe para que las decisiones que costaron caro no haya que volver a
+descubrirlas.
 
-## Problema
+Para usarla todos los meses, el documento es el `README.md`. Éste es el de
+diseño.
 
-CUNIX (software factory, outsourcing) debe reportar mensualmente a su partner las horas de cada desarrollador en un formato Excel específico. Los desarrolladores cargan sus horas en **Kimai**. Hoy la conversión del export de Kimai al Excel del partner es manual.
+> El plan de implementación original (`docs/superpowers/plans/2026-09-24-cunix-horas.md`)
+> describía paso a paso la construcción del **primer** entregable, un Excel
+> pivoteado por desarrollador que ya no existe. Quedó obsoleto entero y **se
+> eliminó**; el historial de git lo conserva. Las decisiones suyas que siguen
+> vigentes están rescatadas más abajo.
 
-## Objetivo
+---
 
-Un proceso repetible: se depositan los exports mensuales de Kimai en una carpeta, se ejecuta un comando, y sale el archivo listo para enviar, con el formato exacto que el partner recibe.
+## 1. El problema
 
-**El entregable cambió dos veces.** Primero el partner pasó de recibir un Excel pivoteado por desarrollador a recibir **un solo archivo por mes con el detalle plano de todos**, una fila por registro de tiempo (lo que esta spec describe). Después C.UNIX impuso sus propios **Anexo II y Anexo II-A**, que son el entregable de hoy y que esta spec todavía no describe.
+**KLG** es una software factory. **C.UNIX** es su cliente. Todos los meses KLG
+le tiene que entregar dos documentos con las horas que su equipo trabajó, en
+el formato que C.UNIX definió:
 
-Los dos formatos muertos **se eliminaron del repo el 2026-10-01**:
+- el **Anexo II** — informe mensual, Word: horas e importe por proyecto, horas
+  por persona, principales trabajos y observaciones;
+- el **Anexo II-A** — detalle, Excel: una fila por registro de tiempo, con las
+  columnas de control y de revisión que C.UNIX completa después.
 
-| Generación | Qué se eliminó | Por qué |
-|---|---|---|
-| Pivot por desarrollador | `escritor_excel.py`, `tests/test_escritor_excel.py`, `templates/plantilla.xlsx` | El CLI no lo llamaba desde el 2026-09-28. Se había conservado «por si el partner vuelve atrás»; el partner no volvió atrás, volvió a cambiar. Un escritor que nadie ejecuta no está probado contra nada real, y el historial de git alcanza para recuperarlo. |
-| Respaldo mensual | `scripts/respaldo_agosto_2026.py` y su salida | Lo reemplazaron los anexos de C.UNIX. |
+Los desarrolladores cargan sus horas en **Kimai**. Armar los dos anexos a mano
+desde los exports de Kimai es el trabajo que esta herramienta hace.
 
-## Alcance
+### Objetivo
 
-**Entra:** lectura de los exports de Kimai (`.xlsx` y `.csv`), mapeo opcional de proyectos a nombres de cliente, generación del archivo único con el detalle plano, verificación de integridad y validaciones informativas.
+Un comando (`python -m cunix_horas AAAA-MM`, o doble clic en `generar.bat`)
+que deje en `output/AAAA-MM/` los dos anexos listos para revisar, más un
+informe de validación que alcance por sí solo para decidir si se envían.
 
-**No entra:** integración con la API de Kimai, envío de mails, facturación, tarifas o montos, interfaz gráfica.
+### Alcance
 
-## Formato de entrada — los exports de Kimai
+**Entra:** lectura de los tres formatos de export de Kimai, lectura de las
+planillas manuales del mes, mapeo opcional de códigos a nombres, generación de
+los dos anexos sobre las plantillas de C.UNIX, verificación de integridad y el
+informe de validación.
 
-Según con qué reporte de Kimai se exporte, sale un archivo distinto, siempre uno por desarrollador por mes. `lector_kimai.leer()` es un despachador: mira el archivo, elige el lector y devuelve `list[Registro]`, así que agregador, validador y escritor no se enteran del formato. Se aceptan **los dos reportes**: el de detalle y el de resumen mensual. No dan lo mismo, y lo único que el resumen no trae y los anexos sí escriben —el usuario de Kimai— se completa desde el mapeo, o queda vacío con un aviso (más abajo, y el porqué).
+**No entra:** integración con la API de Kimai, envío de mails, facturación,
+tarifas (el valor hora lo carga el dueño a mano en la plantilla), interfaz
+gráfica.
+
+---
+
+## 2. Qué entra
+
+```
+input/AAAA-MM/*.xlsx  *.csv     exports de Kimai, uno por desarrollador
+input/AAAA-MM/manual/*.xlsx     lo que NO sale de Kimai
+config/mapeo.yaml               configuración, toda opcional
+templates/*.xlsx  *.docx        las plantillas vacías de C.UNIX
+```
+
+### 2.1 Los tres formatos de export de Kimai
+
+Según con qué reporte se exporte, Kimai da un archivo distinto. Se aceptan los
+tres. `lector_kimai.leer()` es un despachador: mira el archivo, elige el lector
+y devuelve `list[Registro]`, así que el resto del pipeline no se entera del
+formato.
 
 | Se reconoce por | Formato | Lector |
 |---|---|---|
 | extensión `.csv` | timesheet plano en CSV | `lector_timesheet_csv.py` |
 | `.xlsx` con `A1='Date'` | timesheet plano en XLSX | `lector_timesheet_xlsx.py` |
-| `.xlsx` con `B1='Total'` | resumen mensual | `lector_resumen_mensual.py` (ver abajo) |
+| `.xlsx` con `B1='Total'` | resumen mensual (la grilla de días) | `lector_resumen_mensual.py` |
 
-### El resumen mensual sirve, pero no trae todo
+**Ante cualquier otra cosa se falla, nunca se adivina:** el error nombra el
+archivo, dice qué encontró en la fila 1 y enumera los formatos que se
+reconocen. Como todo fallo de lectura, es de *ese* archivo: los demás
+desarrolladores entran igual.
 
-El reporte de detalle de Kimai trae una fila por registro con todas sus
-columnas. El resumen mensual es la grilla de días, con las horas ya sumadas, y
-le faltan la hora de inicio, el usuario, la descripción, el mail y el número
-de proyecto.
+#### Timesheet plano `.xlsx`
 
-De todo eso, **lo único que alguno de los dos anexos escribe y el resumen no
-trae es el usuario de Kimai**, que va en la columna «Usuario Kimai» de la hoja
-`Datos` del Anexo II-A. Lo demás, o se emite vacío porque la plantilla lo
-acepta, o directamente no tiene columna donde ir.
+Fila 1 = encabezados, una fila por registro de tiempo. Columnas relevantes:
 
-| Columna que falta | Qué se hace |
+| Col | Campo | Ejemplo | Uso |
+|-----|-------|---------|-----|
+| A | Date | `46265.708333333` | Serial de Excel, época `1899-12-30` |
+| B | From | `13:00` | Hora de inicio → columna `Inicio` del anexo |
+| D | Duration | `0.14583333` | Fracción de día; × 24 = horas |
+| E | Name | `Matias Zalazar` | Nombre con el que se agrupa a la persona |
+| F | User | `mzalazar` | Usuario de Kimai; clave de `personas:` |
+| G | E-mail | `matias.zalazar@cunix.net` | Se lee, no se escribe en ningún lado |
+| I | Customer | `[608040005] Servicio Nacional de Aduanas` | Texto crudo del cliente |
+| J | Project | `[CO2610170] Aduana-Subastas \| …` | El código entre corchetes es la clave de `proyectos:` |
+| K | Activity | `Desarrollo` | Se lee; hoy ninguna tabla lo escribe |
+| L | Description | `Ticket R-012528` | **Vacía es válido** |
+| R | Project number | `210` | Se lee, no se escribe en ningún lado |
+
+Este lector toma las columnas **por posición**, porque es lo que este export
+viene emitiendo desde siempre. Por eso el encabezado se verifica antes de leer
+nada: si una columna está y no dice lo que tiene que decir, se falla en vez de
+poner el dato equivocado en cada columna. Si directamente no está (un export
+viejo), ese campo queda vacío y las horas se leen igual.
+
+Una fila **sin fecha pero con datos** no se saltea: son horas que
+desaparecerían sin que nadie se entere. Se falla nombrando archivo y fila. Una
+fila completamente vacía sí se saltea.
+
+**No se aplica ningún filtro:** todo registro del export entra al anexo.
+
+#### Timesheet plano `.csv`
+
+El mismo contenido, con dos diferencias: la fecha viene en ISO (`2026-08-31`) y
+la duración en `H:MM` (`2:00`). UTF-8, puede traer BOM.
+
+Acá las columnas se leen **por nombre de encabezado, no por posición**: Kimai
+agrega y reordena columnas de una versión a otra, y leer por posición haría que
+un export nuevo imputara horas equivocadas sin avisar.
+
+Tres cosas se detectan por archivo en vez de asumirse, porque asumirlas hacía
+desaparecer horas sin ruido:
+
+1. el **separador de columnas**, que según el locale de Kimai es `,` o `;`;
+2. los **encabezados repetidos**: con dos columnas `Duration` ganaba la última;
+3. las **filas sin fecha**: si traen datos, son horas que no se facturan.
+
+Los encabezados se normalizan (se les saca el espacio de los bordes) **una sola
+vez**, y tanto la verificación como la lectura usan esas mismas claves. Antes
+la verificación normalizaba y la lectura no, así que un archivo con `" Date "`
+pasaba la verificación y devolvía cero registros sin error.
+
+#### Resumen mensual `.xlsx`
+
+Es la grilla de días: fila 1 con el nombre del dev, `Total` y un encabezado por
+día; después una fila por cliente, una por proyecto y una por actividad; y una
+fila `Total` al final.
+
+```
+A1='Lautaro Zalazar'  B1='Total'  C1='1/8/2026'  D1='2/8/2026' ...
+A2='[763043541] C.UNIX'                          B2='9,00'                 <- CLIENTE (días mergeados)
+A3='[GI2680001] C.UNIX - Proyectos Internos ...' B3='9,00'  E3='0,50' ...  <- PROYECTO
+A4='Coordinación interna'                        B4='9,00'  E4='0,50' ...  <- ACTIVIDAD
+A5='Total'                                       B5='9,00'  ...
+```
+
+Tres cosas se resuelven acá, y ninguna se asume:
+
+1. **Qué es cada fila**, por estructura y no por posición: la de cliente tiene
+   las celdas de día mergeadas, la de proyecto trae el código entre corchetes y
+   las horas por día, y la de actividad viene abajo. **Sólo las filas de
+   actividad emiten `Registro`**: las de proyecto son subtotales y duplicarían
+   las horas.
+2. **El orden de la fecha del encabezado.** Como están todas las columnas del
+   mes, uno de los dos componentes es constante y ése es el mes: `1/8/2026`…
+   `31/8/2026` es día/mes; `8/1/2026`…`8/31/2026` es mes/día. Si no se puede
+   decidir sin ambigüedad, se falla: adivinar mal movería las horas de día y de
+   mes sin que nadie lo note.
+3. **El separador decimal**, que puede ser coma o punto. Si el archivo mezcla
+   los dos, se falla: `"2.00"` leído con coma da 200.
+
+Y hay una **red de seguridad que los otros formatos no permiten**: el archivo
+declara sus propios totales en la fila `Total` —el general en la columna B y
+uno por día en cada columna—. Se comparan los dos contra lo parseado: el
+general ataja las horas que se perdieron, y los de día atajan las que se
+leyeron en la columna equivocada.
+
+**El resumen mensual sirve, pero no trae todo.** Le faltan la hora de inicio,
+el usuario y la descripción.
+
+| Lo que falta | Qué se hace |
 |---|---|
 | `Description` | se emite vacía, y el informe cuenta cuántas por persona |
 | hora de inicio | `Inicio` y `Fin` quedan vacías, y el informe lo avisa |
-| usuario de Kimai | del mapeo; si no está, **vacío con aviso** |
-| mail | no existe: ningún anexo tiene columna de mail |
-| número de proyecto | no existe: ningún anexo tiene esa columna |
+| usuario de Kimai | sale de `config/mapeo.yaml`; si no está, **vacío con aviso** |
 
-El usuario sale de `config/mapeo.yaml`, **nunca adivinado**, en
-`completado.py`: es la **clave** de la persona en `personas:`, y la persona se
-resuelve por su campo `nombre:`, que es lo único que el resumen trae.
+El usuario es **lo único que el resumen no trae y que alguno de los dos anexos
+sí escribe** (la columna «Usuario Kimai» de la hoja `Datos`). Lo completa
+`completado.py`, **nunca adivinando**: la persona se resuelve por su `nombre:`,
+que es lo único que el resumen trae, y el usuario es la clave de esa entrada en
+`personas:`.
 
-**Nada de esto frena un archivo.** Si la persona no está declarada, o si su
-`nombre:` está declarado en dos entradas, el usuario queda vacío —exactamente
-igual que el de quien todavía no tiene usuario de Kimai, que es un hecho
-legítimo y ya ocurre con Gabriel Denis— y `_validacion.txt` lo avisa con
-nombre, archivo, el bloque YAML pegable y el motivo por el que importa: C.UNIX
-pide que cada persona cargue sus horas con su propio usuario. Las horas y las
-filas de esa persona entran completas.
-
-#### Por qué `mail:` y `numero_proyecto:` se eliminaron
-
-Las dos exigencias que había acá —y que frenaban el archivo entero— venían de
-un entregable anterior: un archivo plano cuyas columnas incluían `User`,
-`E-mail` y `Project number`. Ese entregable ya no existe. El Anexo II-A va
-`Fecha | Inicio | Fin | Persona | Proyecto | Descripción | Horas | Alertas |
-Revisión C.UNIX | Horas aprobadas | Horas a pagar | Observación C.UNIX | Día
-nuevo | Nota KLG`, y el Anexo II no escribe ninguno de los dos datos tampoco.
-
-Quedaba entonces un programa que podía trabar una entrega exigiendo un dato
-que después no escribía en ningún lado. Se eliminaron los dos campos del
-mapeo, con su validación: un `mail:` o un `numero_proyecto:` que hayan
-sobrevivido en un `mapeo.yaml` viejo se ignoran al cargar.
-
-El usuario de Kimai sí tiene destino, así que sigue completándose; pero su
-ausencia pasó de frenar a avisar, porque lo peor que produce es **una celda
-vacía** en la hoja `Datos`, y esa celda vacía ya es un valor legítimo del
-entregable.
-
-**Para los registros del reporte de detalle el mapeo no interviene**: su
+**Para los registros del reporte de detalle el mapeo no interviene:** su
 usuario es el de Kimai, aunque el mapeo declare otra cosa. El mapeo es un
 respaldo para lo que la fuente no trae, no una corrección de lo que sí trae.
 `Registro.origen` es lo que distingue los dos casos, y lo pone el lector.
 
-`Registro` sigue teniendo `email` y `numero_proyecto`, que los lectores del
-detalle llenan desde el export: son datos de Kimai, no configuración que
-alguien tenga que mantener, y no se exigen ni se escriben en ningún lado.
+### 2.2 Las fuentes manuales — `input/AAAA-MM/manual/`
 
-El informe dice, por desarrollador, de qué reporte salieron sus filas, y avisa
-de las que van sin descripción y sin hora de inicio. Ese aviso no frena nada:
-es para que el dueño decida si lo manda así o vuelve a exportar.
+Son las planillas que no salen de Kimai. Se declaran en `config/mapeo.yaml`
+bajo `fuentes_manuales:` y las dos son opcionales: un mes sin ninguna corre
+igual. El CLI no entra solo en esa subcarpeta —recorre `input/<mes>/` con
+`glob`, que no es recursivo—: las lee `fuentes_manuales.py`, y sólo las que
+estén declaradas.
 
-`lector_resumen_mensual.py` conserva entero su parseo (orden de la fecha,
-separador decimal, clasificación de filas, verificación contra los totales
-declarados), que es lo que hace confiable a este formato. Sus tests llaman
-al lector interno en vez del punto de entrada.
+**a) Horas de alguien que no está en Kimai** (`horas_sin_kimai:`). La persona
+trabajó pero no tiene usuario, así que sus horas quedaron cargadas en la cuenta
+de otro. La planilla dice cuántas horas hizo cada día; esas horas se le **restan
+día por día** a la otra persona y pasan a filas propias, con su explicación en
+la columna `Nota KLG`.
 
-**Ante cualquier otra cosa se falla**, nunca se adivina: el error nombra el archivo, dice qué encontró en A1 y B1, y enumera los formatos que se reconocen. Como todo fallo de lectura, es de *ese* archivo: los demás desarrolladores se procesan igual.
+**b) Descripciones que alguien entrega aparte** (`descripciones:`). La planilla
+trae las mismas columnas que la hoja `Detalle` y **sólo aporta la
+descripción**: el día y las horas se verifican contra lo que ya está. Desde
+septiembre de 2026 todos cargan la descripción en Kimai, así que esto es la
+excepción, no el camino normal.
 
-### 1. Timesheet plano `.xlsx`
+**Las planillas se leen de forma tolerante.** No se asume ni el nombre de la
+hoja, ni el número de fila del encabezado, ni el formato de la fecha: el
+encabezado se busca por el nombre de las columnas, y la fecha se acepta como
+fecha de Excel, `dd/mm/aaaa`, `aaaa-mm-dd` o texto en español sin año
+(`Dom 02 Ago`). Las filas de subtotal y de total se saltean solas. Si aun así
+no se entiende, el error dice qué se esperaba encontrar y qué se encontró en su
+lugar. El motivo es que estas planillas las arma una persona, no un programa:
+exigirles una forma exacta sería garantizar que fallen.
 
-Export plano de registros de tiempo ("timesheet"), un archivo por desarrollador por mes. Fila 1 = encabezados. Columnas relevantes:
+### 2.3 Las plantillas — `templates/`
 
-| Col | Campo | Ejemplo | Uso |
-|-----|-------|---------|-----|
-| A | Date | `46265.708333333` | Serial Excel, base 1899-12-30 → día del mes |
-| B | From | `13:00` | Hora de inicio; va en la celda de fecha del entregable |
-| D | Duration | `0.14583333` | Fracción de día; × 24 = horas |
-| E | Name | `Matias Zalazar` | Nombre para mostrar |
-| F | User (username) | `mzalazar` | **Clave** de `personas:` en el mapeo |
-| G | E-mail | `matias.zalazar@cunix.net` | Va al entregable |
-| I | Customer | `[608040005] Servicio Nacional de Aduanas` | Texto crudo del cliente |
-| J | Project | `[CO2610170] Aduana-Subastas \| Servicio Nacional de Aduanas - Soporte...` | El código entre corchetes es la **clave** de `proyectos:` |
-| K | Activity | `Desarrollo` | Tercer nivel de la jerarquía de salida |
-| L | Description | `Ticket R-012528` | Lo que hizo; **vacía es válido** |
-| R | Project number | `210` | Va tal cual al entregable |
+Las dos plantillas **vacías** que mandó C.UNIX:
+`Anexo-II-A-Detalle-horas-KLG.xlsx` y
+`Anexo-II-Informe-mensual-horas-KLG.docx`.
 
-Columnas ignoradas: C (To), H, M (Billable), N, O, P, Q, S, T.
+Además de dar la estructura, la del Anexo II-A **es la fuente del valor hora de
+cada proyecto**: el dueño lo carga una sola vez en su hoja `Datos` (columnas
+Proyecto / Cliente / Valor hora, filas 8 a 22) y el informe lo lee de ahí. Los
+valores hora **se leen, nunca se escriben**.
 
-**`Project number` no es el código entre corchetes.** Son dos campos
-distintos de Kimai y los dos hacen falta. El proyecto de Luciano dice
-`[AD2690002]` en el corchete y tiene `Project number` `210` — y en el archivo
-de septiembre del partner ese proyecto figura con `210`. El del corchete es
-la clave del mapeo, que es estable aunque se renombre el proyecto; el número
-va tal cual a la salida. Confundirlos le mandaría al partner un número de
-proyecto que no es el suyo, sin ninguna señal.
+### 2.4 La configuración — `config/mapeo.yaml`
 
-Este lector toma las columnas **por posición**, así que las del detalle se
-verifican igual que las otras: si están y no dicen lo que tienen que decir,
-se falla en vez de poner el dato equivocado en cada columna. Si directamente
-no están (un export viejo), los campos nuevos quedan vacíos y las horas se
-leen igual.
+**Todo el archivo es opcional.** Un mes normal no obliga a tocar nada.
 
-**No se aplica ningún filtro:** todo registro presente en el export entra al Excel.
+```yaml
+anexos:
+  archivo_detalle: "Anexo-II-A-Detalle-horas-KLG-{periodo}.xlsx"
+  archivo_informe: "Anexo-II-Informe-mensual-horas-KLG-{periodo}.docx"
+  perfil_por_defecto: "Desarrollador"
+  perfiles: { "Nombre Apellido": "Lider tecnico" }
+  dias_habiles_entrega: 5
+  contrato_de_fecha: "01/01/2026"
+  fecha_de_emision: "05/10/2026"
 
-### Restricción técnica: openpyxl no puede abrir estos archivos
+fuentes_manuales:
+  horas_sin_kimai:
+    - persona: "Gabriel Denis"
+      planilla: "gabriel-denis.xlsx"
+      restar_a: "Alexis Carnero"
+      proyecto: "SELICO"
+  descripciones: []
 
-Kimai emite el atributo `showZeroes` en `<sheetView>` donde el esquema OOXML define `showZeros`. `openpyxl.load_workbook()` falla con:
+personas:
+  acarnero: { nombre: "Alexis Carnero" }   # clave = usuario de Kimai
+
+proyectos:
+  CO2610170: { cliente: "Servicio Nacional de Aduanas", proyecto: "Subastas" }
+```
+
+- **El único campo obligatorio de una persona es `nombre:`**, y es el único que
+  existe. La clave de la entrada *es* su usuario de Kimai. `personas:` sólo le
+  aporta algo a quien exporta con el resumen mensual; para el reporte de
+  detalle no interviene.
+- **Un proyecto sin declarar no frena nada:** sale con el nombre derivado del
+  texto de Kimai y queda listado en `_validacion.txt` con el bloque YAML listo
+  para pegar. El mapeo es un pulido opcional de nombres, no un requisito.
+- La clave de `proyectos:` es el **código entre corchetes** de la columna
+  `Project` (`[CO2610170]` → `CO2610170`), con **match exacto, nunca por
+  similitud**: el código es estable aunque alguien renombre el proyecto en
+  Kimai, y un match difuso imputaría horas al cliente equivocado sin que nadie
+  lo note.
+- El **nombre del proyecto** tiene que escribirse **igual** acá y en la hoja
+  `Datos` de la plantilla: es por ese nombre que el informe le encuentra el
+  valor hora.
+- El cliente se declara **por proyecto**, no en una sección aparte: así se
+  pueden agrupar o separar en el anexo proyectos que en Kimai cuelgan de
+  clientes distintos.
+- `dias_habiles_entrega`, `contrato_de_fecha` y `fecha_de_emision` son textos
+  del informe. Si no están, **el documento sale con el marcador a la vista**
+  (`[●]`, `[DD/MM/AAAA]`) para que el dueño los complete. Nunca se inventan.
+- Un campo **declarado y en blanco sí frena**: lo que quedó escrito a medias
+  conviene que falle ahora, con el nombre de la entrada, y no que salga vacío
+  en un anexo que ya va camino a C.UNIX.
+- Los patrones de nombre de archivo se validan **al cargar el mapeo**, antes de
+  leer ningún export: que el único reemplazo sea `{periodo}` y que la extensión
+  sea la que corresponde. Un patrón roto tiene que fallar antes de procesar
+  todo, no después.
+
+---
+
+## 3. Qué sale
+
+```
+output/AAAA-MM/
+  Anexo-II-A-Detalle-horas-KLG-AAAA-MM.xlsx
+  Anexo-II-Informe-mensual-horas-KLG-AAAA-MM.docx
+  _validacion.txt
+```
+
+### 3.1 Anexo II-A (detalle, Excel)
+
+Catorce columnas:
+`Fecha | Inicio | Fin | Persona | Proyecto | Descripción | Horas | Alertas |
+Revisión C.UNIX | Horas aprobadas | Horas a pagar | Observación C.UNIX |
+Día nuevo | Nota KLG`.
+
+- **A–G las escribe la herramienta**, una fila por registro, ordenadas
+  cronológicamente y, dentro del día, por persona.
+- **H–M son de C.UNIX**: tres son fórmulas que ya vienen escritas en las 600
+  filas del rango de la plantilla —alcanza con no pisarlas— y tres las completa
+  él al revisar.
+- **N (`Nota KLG`)** la agrega la herramienta a la derecha de todo, y **sólo
+  cuando alguna fila la necesita** (hoy, las horas separadas de una persona sin
+  usuario de Kimai). Va fuera de todos los rangos de fórmulas de C.UNIX a
+  propósito.
+- La hoja `Datos` recibe el período, el equipo (persona, perfil, usuario de
+  Kimai) y, si está configurada, la fecha del contrato. Un usuario vacío se
+  escribe como celda **vacía, no como `""`**: el anexo se compromete a que esa
+  celda vacía signifique «esta persona todavía no tiene usuario de Kimai».
+- Las hojas `Instrucciones` y `Resumen` quedan intactas: son de C.UNIX.
+
+`Fin` **no** lo trae Kimai: se calcula como `Inicio + Horas`. Es aritmética
+sobre datos registrados, no una reconstrucción —Kimai guarda cada registro como
+un bloque continuo—. Cuando el export no trae hora de inicio, `Inicio` y `Fin`
+quedan vacíos, que es lo que la plantilla espera.
+
+**Capacidad:** la hoja `Detalle` llega hasta la fila 601 y la hoja `Datos`
+tiene 15 lugares de equipo. Un mes que no entre **no se genera**: escribir de
+más dejaría registros fuera de todas las fórmulas del anexo y el total no
+cerraría. El mensaje dice que hay que pedirle a C.UNIX una plantilla más
+grande.
+
+### 3.2 Anexo II (informe, Word)
+
+| Qué | Cómo sale |
+|---|---|
+| Encabezado, período | automático |
+| Contrato de fecha, fecha de emisión | configurables; si no, queda `[DD/MM/AAAA]` |
+| Tabla 0, plazo de entrega | configurable; si no, queda `[●]` |
+| Tabla 1, horas e importe por proyecto | automático |
+| Tabla 2, horas por persona, días y promedio | automático |
+| Tabla 3, principales trabajos | **borrador mecánico**, para editar |
+| Tabla 4, observaciones | se deja con `[●]`: la escribe el dueño |
+| Tabla 5, firmas | intacta |
+
+Las tres tablas que se llenan se arman **clonando la fila modelo** que dejó la
+plantilla, así cada fila nueva hereda sus bordes, su tipografía y su
+alineación, y el documento sigue siendo el de C.UNIX.
+
+El párrafo «EJEMPLO: agosto 2026…» con el que C.UNIX mandó el formato **se
+quita del documento generado**: es la nota de quien envió la plantilla y no
+corresponde en un informe que entrega KLG. En la plantilla queda.
+
+Las tres tablas salen de **las mismas filas** que el Anexo II-A, para que
+informe y detalle no puedan discrepar: no hay dos caminos de cálculo.
+
+Si a algún proyecto le falta el valor hora, **el total a facturar se deja
+vacío** en vez de escribir una suma parcial: antes que un número creíble y
+bajo, un hueco que el informe de validación explica.
+
+### 3.3 `_validacion.txt`
+
+El informe que el dueño lee antes de mandar nada. Tiene que alcanzar por sí
+solo para decidir. Arriba de todo va **quién entró a los anexos**, con
+registros, horas y de qué reporte salió cada uno: con todas las personas en un
+solo par de documentos, esa lista es lo único que distingue un envío completo
+de uno que no lo es. Después: qué archivos no entraron y por qué, qué se
+generó, qué hay que completar a mano, qué archivos de la carpeta **no** son de
+esta corrida, los proyectos sin mapear y sin valor hora, las personas sin
+usuario de Kimai, los registros sin descripción y los avisos de carga por
+persona.
+
+---
+
+## 4. El pipeline
+
+```
+input/AAAA-MM/*.xlsx *.csv
+   |
+   v
+lector_kimai        detecta el formato y delega  -> list[Registro]
+   |
+   v
+completado          le pone al resumen mensual el usuario de Kimai del mapeo
+   |
+   v
+filas_anexo         registros + mapeo -> filas de la hoja Detalle, ordenadas,
+   |                 y de ahí las tres tablas del informe
+   v
+fuentes_manuales    aplica las planillas de input/<mes>/manual/
+   |
+   +--> escritor_anexo_detalle -> Anexo II-A (.xlsx) + verificación de integridad
+   +--> escritor_anexo_informe -> Anexo II (.docx)
+   +--> validador              -> avisos de carga por persona
+   |
+   v
+cli                 orquesta todo y escribe _validacion.txt
+```
+
+### Módulos
+
+El paquete vive en `cunix_horas/` **en la raíz del proyecto, no bajo `src/`**:
+así `python -m cunix_horas` funciona sin `pip install -e .`, que es requisito
+para el `.bat` de doble clic.
+
+| Módulo | Responsabilidad |
+|---|---|
+| `lector_kimai.py` | Despachador: detecta el formato del export y delega. |
+| `kimai_comun.py` | `Registro`, `ErrorLectura` y el parseo XML del `.xlsx`, compartidos. |
+| `lector_timesheet_xlsx.py` | Timesheet `.xlsx` → `list[Registro]`. Serial de fecha, duración × 24, columnas por posición. |
+| `lector_timesheet_csv.py` | Timesheet `.csv` → `list[Registro]`. Fecha ISO, duración `H:MM`, columnas por nombre. |
+| `lector_resumen_mensual.py` | Resumen mensual `.xlsx` → `list[Registro]`, verificados contra los totales que el archivo declara. |
+| `completado.py` | Le pone a los registros del resumen mensual el usuario de Kimai del mapeo; si no lo resuelve, lo deja vacío y devuelve un aviso. Nunca frena. |
+| `mapeo.py` | Carga y valida `config/mapeo.yaml`. Resuelve código → (cliente, proyecto) y persona → usuario. |
+| `anexos.py` | `Periodo`, los patrones de nombre, la marca de INCOMPLETO y el formato de números. |
+| `filas_anexo.py` | `list[Registro]` + mapeo → las filas de la hoja `Detalle` y las tres tablas del informe. |
+| `fuentes_manuales.py` | Las planillas de `input/<mes>/manual/`: la resta día por día y la carga de descripciones. |
+| `escritor_anexo_detalle.py` | Escribe el Anexo II-A sobre una copia de la plantilla. Incluye la verificación de integridad. |
+| `escritor_anexo_informe.py` | Escribe el Anexo II sobre una copia de la plantilla. |
+| `validador.py` | Avisos de carga por persona sobre los registros crudos. Nunca frenan. |
+| `cli.py` | Orquesta, decide los nombres de salida y escribe `_validacion.txt`. |
+
+Todos los `dataclass` son `frozen=True` y ninguna etapa muta lo que recibe:
+cada una devuelve un valor nuevo. `scripts/anexos_agosto_2026.py` queda fuera
+del pipeline (ver §6.11).
+
+---
+
+## 5. Convenciones que atraviesan todo el código
+
+- **Todo en español**: identificadores, mensajes y nombres de archivo. La
+  documentación y los errores los lee el dueño, que no es programador.
+- **UTF-8 explícito** en toda lectura y escritura de texto: los nombres de
+  cliente traen acentos (`Subsecretaría`, `Pública`). El CLI además reconfigura
+  `stdout`/`stderr` a UTF-8, para que la consola de Windows no rompa los
+  acentos aunque no se haya entrado por `generar.bat`.
+- **Nunca `strftime("%B")`** para el nombre del mes: depende del locale de la
+  máquina y en Windows suele salir en inglés. Hay una tabla fija en
+  `anexos.MESES_ES`.
+- **Los números se escriben como los escribe C.UNIX**: coma decimal y punto de
+  miles (`306,0`, `3.706,00`), nunca con `str(float)`, que daría `306.0`.
+- **Redondeo medio hacia arriba**, no el bancario de Python: con el bancario,
+  2,25 h daría 2,2 y el promedio de una persona dejaría de coincidir con el del
+  anexo del mes anterior.
+- Las horas se comparan con una tolerancia de `1e-6`: las duraciones del `.xlsx`
+  de Kimai llegan como fracción de día y 1 h vale `1.000000000000008`.
+- Época de los seriales de fecha de Excel: `date(1899, 12, 30)`.
+
+---
+
+## 6. Decisiones de diseño vigentes, y por qué
+
+### 6.1 Los `.xlsx` de Kimai no se leen con openpyxl
+
+Kimai emite el atributo `showZeroes` en `<sheetView>` donde el esquema OOXML
+define `showZeros`. `openpyxl.load_workbook()` explota con:
 
 ```
 TypeError: SheetView.__init__() got an unexpected keyword argument 'showZeroes'
 ```
 
-Por lo tanto la lectura del input **no usa openpyxl**: se descomprime el `.xlsx` como ZIP y se parsea `xl/worksheets/sheet1.xml` con `xml.etree.ElementTree`, resolviendo `xl/sharedStrings.xml` y también celdas `inlineStr`. Verificado funcionando sobre el archivo real `20260924-kimai-export.xlsx`.
-
-La escritura del output **sí** usa openpyxl (la plantilla es un archivo normal).
-
-El parseo XML vive una sola vez, en `kimai_comun.py`, y lo usan los dos lectores de `.xlsx`.
-
-### 2. Timesheet plano `.csv`
-
-El mismo contenido que el anterior, con los mismos nombres de encabezado, pero con dos diferencias que importan: la fecha viene en ISO (`2026-08-31`) en vez de serial de Excel, y la duración viene en `H:MM` (`2:00`) en vez de fracción de día. El archivo está en UTF-8 y puede traer BOM.
-
-Acá las columnas se leen **por nombre de encabezado, no por posición**: Kimai agrega y reordena columnas de una versión a otra, y leer por posición haría que un export nuevo imputara horas equivocadas sin avisar.
-
-### 3. Resumen mensual `.xlsx`
-
-Tiene la misma forma que el Excel de salida: fila 1 con el nombre del dev, `Total` y un encabezado por día; después una fila de cliente, una de proyecto y una de actividad por cada combinación; y una fila `Total` al final.
-
-```
-A1='Lautaro Zalazar'  B1='Total'  C1='1/8/2026'  D1='2/8/2026' ...
-A2='[763043541] C.UNIX'                          B2='9,00'      <- CLIENTE (días mergeados)
-A3='[GI2680001] C.UNIX - Proyectos Internos ...' B3='9,00'  E3='0,50' ...   <- PROYECTO
-A4='Coordinación interna'                        B4='9,00'  E4='0,50' ...   <- ACTIVIDAD
-A5='Total'                                       B5='9,00'  ...
-```
-
-- **Qué es cada fila** se decide por estructura, no por posición, igual que del lado de la escritura (`escritor_excel._fila_cliente`): la de cliente tiene las celdas de día mergeadas, la de proyecto trae el código entre corchetes y las horas por día, y la de actividad viene abajo. **Sólo las filas de actividad emiten `Registro`**: las de proyecto son subtotales y duplicarían las horas.
-- **El orden de la fecha del encabezado se detecta por archivo.** Como están todas las columnas del mes, uno de los dos componentes es constante y ése es el mes: `1/8/2026`…`31/8/2026` es día/mes; `8/1/2026`…`8/31/2026` es mes/día. Si no se puede decidir sin ambigüedad, se falla: adivinar mal movería las horas de día y de mes sin que nadie lo note.
-- **El separador decimal también se detecta por archivo**: un export trae `9,00` y otro `150.0`.
-- **Red de seguridad:** el archivo declara su propio total en la columna B de la fila `Total`. Después de parsear se compara la suma leída contra ese total, y si no coinciden (con una tolerancia chica por el redondeo del propio archivo) se falla. Es una verificación que los otros dos formatos no permiten, y ataja cualquier error de lectura de la grilla antes de que llegue al Excel del cliente.
-
-Este formato **no trae el username**, sólo el nombre para mostrar (`A1`). El lector pone en `Registro.username` lo que venga en A1 y no sabe nada del mapeo; es `Mapeo.resolver_persona` el que busca primero por username y, si no encuentra, por el `nombre:` que ya está configurado en cada persona. Si dos personas comparten el mismo `nombre:`, falla en vez de elegir una.
-
-## Formato de salida — el detalle plano (vigente)
-
-Un solo `.xlsx` por mes, con **todos** los desarrolladores, una fila por registro de tiempo. El contrato es `Horas KLG-Sept2025.xlsx`, el archivo que mandó el partner (160 filas, septiembre 2025, 5 desarrolladores).
-
-### Por qué cambió
-
-El partner factura sobre el detalle, no sobre el pivot: quiere ver cada carga de horas con su hora de inicio, su descripción y su número de proyecto, y quiere un único adjunto por mes. El pivot agregaba las horas por día y perdía todo eso.
-
-### Las diez columnas, en este orden
-
-```
-Date | Duration | Name | User | E-mail | Customer | Project | Activity | Description | Project number
-```
-
-- Fila 1: encabezados **en negrita**, con relleno `FFEEEEEE`.
-- `Date`: `datetime` que combina la fecha con la **hora de inicio** (`From`), con formato de celda `yyyy-mm-dd`. La hora se guarda pero no se muestra; está ahí para ordenar y para que el dato no se pierda.
-- `Duration`: **`timedelta`**, con formato de celda `[hh]:mm`. No es un número de horas: es una duración real, así que el partner totaliza la columna y obtiene `160:30` y no `160,5`.
-- Anchos de columna, de A a J: `9.22, 9.56, 11.89, 7.22, 19.67, 22.11, 21.0, 8.67, 40.67, 15.0`.
-- Autofiltro sobre el rango de datos.
-- `Description` **puede venir vacía y está bien**: 112 de las 160 filas del archivo de referencia lo están. La celda queda vacía, no con un texto vacío.
-
-**Ocho columnas son passthrough directo de Kimai**, sin transformar: `Date`, `Duration`, `Name`, `User`, `E-mail`, `Activity`, `Description` y `Project number`.
-
-Ojo con `Project number`: **no es el código entre corchetes**. Son dos campos distintos de Kimai que se parecen. El del corchete (`[AD2690002]`) es la clave del mapeo; `Project number` (`210`) es un campo propio de Kimai que va tal cual a la salida. `Registro` guarda los dos.
-
-Las otras dos, `Customer` y `Project`, salen del mapeo **si el proyecto está declarado**, y si no se derivan del texto crudo:
-
-- Cliente: se le saca el prefijo `[codigo] ` si lo tiene. La derivación tiene que funcionar igual **cuando no hay prefijo**: el `Customer` de uno de los desarrolladores viene como `CUNIX`, sin corchetes, y asumir el prefijo dejaría esa columna en blanco para toda esa persona.
-- Proyecto: se le saca el prefijo `[codigo] ` y se corta en el `|` (lo que sigue es la descripción larga de Kimai).
-
-### Orden de las filas
-
-Agrupadas por desarrollador, los desarrolladores **alfabéticamente por el nombre para mostrar**, y dentro de cada uno **cronológicamente** (fecha, después hora de inicio). A igualdad de momento se conserva el orden del export, para que dos corridas sobre los mismos datos den el mismo archivo y comparar dos envíos siga sirviendo.
-
-### Nombre del archivo
-
-`Horas KLG-<Mes><Año>.xlsx`, siguiendo el archivo del partner. Es configurable en `config/mapeo.yaml` (`archivo_salida:`), con `{mes}` (tabla fija `Jan`…`Dec`) y `{anio}`. Por defecto, agosto de 2026 da `Horas KLG-Aug2026.xlsx`.
-
-### El riesgo del archivo único, y cómo se resuelve
-
-Antes, si el archivo de un desarrollador fallaba, **faltaba un Excel entero** en la carpeta: imposible no notarlo. Ahora todo va junto, así que **un desarrollador que falta es invisible**: el archivo se ve completo y no lo es.
-
-Por eso, si algún export falla:
-
-- el consolidado **se genera igual** con los que sí se pudieron leer (no generarlo dejaría al dueño sin nada que revisar);
-- sale con la marca en el **nombre**: `Horas KLG-Aug2026 (INCOMPLETO - FALTAN 2 DESARROLLADORES - NO ENVIAR).xlsx`, que es lo único que el dueño ve al adjuntarlo a un mail;
-- y el archivo **limpio** que hubiera quedado de una corrida anterior se aparta a `... (CORRIDA ANTERIOR - NO ENVIAR).xlsx`, para que no se envíe en su lugar.
-
-Cuando no falla nada, el nombre es el limpio.
-
-Arriba de todo, `_validacion.txt` dice qué desarrolladores entraron y cuáles no, con el motivo de cada fallo.
-
-## Formato de salida anterior — Excel pivoteado por desarrollador (ELIMINADO)
-
-**Este formato ya no se genera y su código ya no está en el repo.** El escritor (`escritor_excel.py`), su plantilla (`templates/plantilla.xlsx`) y sus tests se eliminaron el 2026-10-01; se recuperan del historial de git si alguna vez hiciera falta. Lo que sigue queda como documentación de lo que fue.
-
-Un `.xlsx` por desarrollador, una sola hoja llamada `Worksheet`.
-
-```
-     A                        B       C          D          ...  AG
- 1   Franco Dodera            Total   10/1/2025  10/2/2025  ...  10/31/2025
- 2   Sistemas - C.UNIX        55.5                                          <- CLIENTE
- 3   Fan Player               55.5                                    4.0   <- PROYECTO (negrita)
- 4   Desarrollo               55.5                                    4.0   <- ACTIVIDAD
- 5   Club Atlético Talleres   72.5                                          <- CLIENTE
- 6   CRM                      72.5              2.0                   3.0   <- PROYECTO (negrita)
- 7   Desarrollo               72.5              2.0                   3.0   <- ACTIVIDAD
- 8   Total                   128.0    4.0       7.0        ...       7.0    <- TOTAL
-```
-
-Reglas:
-
-- `A1` = nombre completo del desarrollador (de `personas.<username>.nombre`).
-- `B1` = literal `"Total"`.
-- `C1:…` = un encabezado por día del mes, **como texto** con formato `M/D/YYYY` (`10/1/2025`, sin cero a la izquierda). Se generan tantas columnas como días tenga el mes; para octubre son 31 (C..AG).
-- Jerarquía de filas: Cliente → Proyecto → Actividad. Un cliente puede tener varios proyectos; **cada proyecto tiene exactamente una fila de actividad**.
-- **Una sola fila de actividad por proyecto.** En Kimai cada desarrollador clasifica sus horas como quiere (`Desarrollo`, `Gestión`, `Testing`…). Esa clasificación es interna: el partner factura sobre el proyecto y viene recibiendo una única fila desde siempre. Todas las actividades de un mismo proyecto se suman en una sola fila, cuyo texto sale de `actividad:` en `config/mapeo.yaml` (`Desarrollo` si no está declarado).
-- Columna `B` de cada fila = total del mes de esa fila.
-- Celdas de día vacías cuando no hay horas (no `0`).
-- Fila final `Total`: total general en `B`, y total por día en cada columna, **incluyendo `0.0`** en los días sin horas (así está en la plantilla).
-- Merge de `C:AG` en cada fila de cliente (en la plantilla: `C2:AG2`, `C5:AG5`).
-
-Nombre de archivo (formato anterior, ya no se genera): `<Mes> <apellido>.xlsx`, p. ej. `Oct Dodera.xlsx`. El apellido salía de un campo `archivo:` de `personas:` que se eliminó.
-
-### Estilos
-
-`templates/plantilla.xlsx` es la **fuente de estilos**, no un archivo que se muta. Rellenar la plantilla insertando filas rompería estilos de forma silenciosa, y la cantidad de filas (proyectos por dev) y de columnas (días del mes) es variable.
-
-El escritor lee de la plantilla el estilo de una celda representativa por tipo de fila y lo aplica a las filas que genera:
-
-| Tipo de fila | Celda modelo | Estilo observado |
-|--------------|--------------|------------------|
-| Encabezado | `A1` | default |
-| Cliente | `A2` | normal, alineado izquierda |
-| Proyecto | `A3` | **negrita** |
-| Actividad | `A4` | normal |
-| Total | `A8` | normal |
-
-Anchos de columna tomados de la plantilla: `A=34.14`, `B=9.29`, `C=14.0`, `L=15.14`. Sin bordes, sin rellenos, sin colores de fuente especiales.
-
-## Configuración — `config/mapeo.yaml`
-
-```yaml
-archivo_salida: "Horas KLG-{mes}{anio}.xlsx"
-
-actividad: "Desarrollo"
-
-personas:   # opcional entera; sin ella nadie frena
-  mzalazar:  { nombre: "Matias Zalazar" }
-  lzalazar:  { nombre: "Lautaro Zalazar" }
-
-proyectos:
-  CO2610170: { cliente: "Servicio Nacional de Aduanas", proyecto: "Subastas" }
-  AD2690002: { cliente: "Sistemas - C.UNIX", proyecto: "VictoriusCP2" }
-```
-
-- `archivo_salida:` es el nombre del único archivo que recibe el partner. `{mes}` sale de la tabla fija de meses del proyecto (`Jan`…`Dec`) y `{anio}` es el año de cuatro dígitos; agosto de 2026 da `Horas KLG-Aug2026.xlsx`. Es opcional. El archivo de referencia del partner usa `Sept` para septiembre: si se quiere esa forma exacta, o meses en español, se escribe el mes a mano en el patrón, a costa de tener que actualizar la línea cada mes. Se valida al cargar el mapeo —antes de leer ningún export— que el patrón no use reemplazos inventados y que termine en `.xlsx`.
-- **`personas:` es opcional para quien exporta con el reporte de detalle.** Ese export trae el nombre y el usuario de cada desarrollador, y el mapeo no interviene. Si la sección no está, el mapeo carga igual.
-- **`personas:` le aporta al resumen mensual una sola cosa: el usuario de Kimai** de la columna «Usuario Kimai» de la hoja `Datos`, que es la clave de la entrada. La persona se resuelve por su `nombre:`. Si no está declarada, o si dos entradas comparten el `nombre:`, **no frena nada**: el usuario queda vacío y `_validacion.txt` lo avisa con el bloque YAML pegable.
-- **El único campo de cada persona es `nombre:`.** Ya no existe `archivo:` (el apellido del Excel por desarrollador del entregable anterior): no se escribía en ningún lado. Si un `mapeo.yaml` viejo lo trae, se ignora.
-- **No hay `mail:` ni `numero_proyecto:`.** Ninguno de los dos anexos tiene esas columnas. Eran campos del entregable anterior y su ausencia frenaba el archivo: exigían un dato que después no se escribía en ningún lado. Se eliminaron junto con su validación; si quedaron escritos en un `mapeo.yaml` viejo, se ignoran.
-- **Cada entrada de `proyectos:` es opcional también.** Un proyecto sin declarar **ya no frena nada**: sale con el nombre derivado de Kimai y queda listado en `_validacion.txt` con el bloque listo para pegar. El mapeo pasó de ser obligatorio a ser un pulido opcional de nombres.
-- La clave de `proyectos` es el código entre corchetes de la columna J (`[CO2610170]` → `CO2610170`). **Match exacto**, nunca por similitud de texto: el código es estable aunque se renombre el proyecto en Kimai, y un match difuso podría imputar horas al cliente equivocado sin que nadie lo note.
-- El cliente se declara **por proyecto**, no en una sección aparte. Esto permite agrupar en el Excel proyectos que en Kimai están bajo clientes distintos, o separarlos, según lo que quiera ver el partner.
-- La clave de `personas` es la columna F (username de Kimai), no el nombre.
-- `actividad:` es el texto de la **única fila de actividad** que lleva cada proyecto en el Excel. Es opcional: si no está declarado vale `Desarrollo`, que es lo que el partner recibió siempre. Es configuración y no una constante en el código para que cambiar lo que ve el partner sea editar una línea. Si está declarado pero vacío o no es texto, el mapeo no carga: un Excel con la fila de actividad en blanco se vería raro del otro lado y nadie sabría de dónde salió.
-
-## Arquitectura
-
-```
-input/2025-10/*.xlsx  y  *.csv
-   |
-   +--> lector_kimai      -> detecta el formato y delega -> list[Registro]
-   +--> detalle           -> Detalle: una FilaDetalle por registro, ya ordenada;
-   |                         mapeo si el proyecto está declarado, derivación si no
-   +--> validador         -> avisos por desarrollador
-   +--> escritor_detalle  -> output/2025-10/Horas KLG-Oct2025.xlsx  + integridad
-```
-
-El camino anterior (`agregador` → `escritor_excel`, un Excel por desarrollador) se eliminó a medias: `escritor_excel.py` ya no está, `agregador.py` sí. Ver «Lo que quedó pendiente», al final.
-
-Módulos en `cunix_horas/` (paquete en la raíz del proyecto, no bajo `src/`: así `python -m cunix_horas` funciona sin `pip install -e .`, requisito para el `.bat` de doble clic):
-
-| Módulo | Responsabilidad | Depende de |
-|--------|-----------------|------------|
-| `lector_kimai.py` | Despachador: detecta el formato del export y delega en los tres lectores. | los tres lectores |
-| `kimai_comun.py` | `Registro`, `ErrorLectura` y el parseo XML del `.xlsx`, compartidos. | — |
-| `lector_timesheet_xlsx.py` | Timesheet `.xlsx` → `list[Registro]`. Serial de fecha, duración × 24. | `kimai_comun` |
-| `lector_timesheet_csv.py` | Timesheet `.csv` → `list[Registro]`. Fecha ISO, duración `H:MM`, columnas por nombre. | `kimai_comun` |
-| `lector_resumen_mensual.py` | Resumen mensual `.xlsx` → `list[Registro]` marcados con `origen`. Verifica contra el total declarado. | `kimai_comun` |
-| `completado.py` | Les pone a los registros del resumen mensual el usuario de Kimai que declara el mapeo; si el mapeo no lo resuelve, lo deja vacío y devuelve un aviso con el YAML pegable. No frena nunca. Los del detalle pasan intactos. | `mapeo` |
-| `mapeo.py` | Carga y valida el YAML. Resuelve código → (cliente, proyecto). Resuelve username *o* nombre para mostrar → (nombre, username), o `None` si no hay una sola persona que corresponda. | — |
-| `detalle.py` | `list[Registro]` + mapeo → `Detalle`: una `FilaDetalle` por registro, ordenadas, más los proyectos sin mapear y los `Project number` ambiguos. | `mapeo` |
-| `escritor_detalle.py` | `Detalle` → el `.xlsx` del partner. Incluye la verificación de integridad, que **relee** el archivo escrito. | openpyxl |
-| `agregador.py` | **Sin ejecutar, pendiente de eliminar.** `list[Registro]` + mapeo → `Reporte` con jerarquía y totales. Sobrevive sólo porque `validador.validar()` usa sus tipos. | `mapeo` |
-| `validador.py` | `avisos_de_desarrollador()` sobre registros crudos (vigente) y `validar()`/`dato_de_desvio()` sobre el `Reporte` (muertos, pendientes de eliminar). | `agregador` |
-| `cli.py` | Orquesta: recorre `input/<mes>/`, procesa cada archivo, escribe output y `_validacion.txt`. | todos |
-
-Tipos centrales:
-
-```python
-@dataclass(frozen=True)
-class Registro:
-    fecha: date
-    horas: float          # ya convertidas (Duration * 24)
-    username: str         # col F
-    cod_proyecto: str     # extraído de col J
-    actividad: str        # col K
-    # --- lo que pide el detalle plano; al final y con valor por defecto,
-    #     para no romper las construcciones posicionales que ya existen ---
-    texto_proyecto: str = ""       # col J tal cual
-    hora_inicio: time | None = None  # col B (From); None si Kimai no la trae
-    nombre: str = ""               # col E (Name), distinto del username
-    email: str = ""                # col G
-    descripcion: str = ""          # col L; vacía es válido
-    numero_proyecto: str = ""      # col R; NO es el código entre corchetes
-    texto_cliente: str = ""        # col I tal cual
-
-@dataclass(frozen=True)
-class FilaDetalle:          # una fila del archivo del partner
-    fecha_hora: datetime    # fecha + hora de inicio; se muestra sólo la fecha
-    duracion: timedelta     # duración real, no un número de horas
-    nombre: str
-    username: str
-    email: str
-    cliente: str            # del mapeo, o derivado del texto de Kimai
-    proyecto: str           # idem
-    actividad: str
-    descripcion: str        # vacía es válido
-    numero_proyecto: str    # el campo propio de Kimai, NO el código del corchete
-
-@dataclass(frozen=True)
-class Reporte:              # conservado, para el escritor pivoteado
-    nombre_dev: str
-    nombre_archivo: str
-    anio: int
-    mes: int
-    filas: tuple[Fila, ...]   # Fila: (cliente, proyecto, actividad, {día: horas})
-                              # una sola Fila por (cliente, proyecto);
-                              # `actividad` es el texto configurado, no el de Kimai
-```
-
-Todas las estructuras son inmutables; cada etapa devuelve un valor nuevo.
-
-## Manejo de errores
-
-**Frena la corrida entera (no se escribe nada):**
-
-- **La verificación de integridad no cierra.** Después de escribir el archivo en el temporal, se lo **relee** y se suman sus duraciones; si el total no coincide *exactamente* con la suma de las horas de los registros leídos, no se reemplaza nada y se falla ruidoso. Con 160 filas de cinco desarrolladores en un solo archivo, una fila perdida no se ve nunca a ojo, y el archivo se vería completo sin serlo. No es un aviso: es lo único que separa un entregable correcto de uno creíble y equivocado.
-
-**Deja a ese desarrollador afuera del archivo (y el consolidado sale marcado como INCOMPLETO):**
-
-- Archivo de input ilegible, de formato desconocido, o sin la estructura de columnas esperada.
-- Export sin ninguna fila de datos, o con todas sus filas fuera del mes que se está generando: las dos cosas suelen ser el rango de fechas mal puesto en Kimai.
-- Hora de inicio (`From`) que no tiene formato de hora: va en la celda de fecha del entregable, y mal leída movería el registro de día.
-- Proyecto sin código entre corchetes en la columna `Project`.
-
-El fallo de un archivo **no impide** procesar los demás: cada input es independiente. El informe dice, arriba de todo, quién entró y quién no, con el motivo de cada fallo.
-
-**Ya no frena:** un desarrollador de resumen mensual ausente de `personas:` (o con su `nombre:` repetido en dos entradas), un proyecto ausente de `proyectos:`, y un export con horas de más de un desarrollador. Lo primero porque lo único que el mapeo le aportaba era el usuario de Kimai, y su ausencia produce una celda vacía en la hoja `Datos` que ya es un valor legítimo: ahora avisa. Los campos `mail:` y `numero_proyecto:`, que también frenaban, se eliminaron: no hay columna en ningún anexo donde escribirlos. El proyecto, porque el nombre se deriva de Kimai. El export con dos desarrolladores, porque el chequeo existía para que el Excel pivoteado no le imputara las horas de todos a una sola persona: en el detalle plano cada fila lleva su propio `Name`, `User` y `E-mail`, así que ese error ya no es posible, y frenar el archivo dejaría afuera a **dos** desarrolladores en vez de incluirlos bien.
-
-**Frenaba en el formato anterior** (conservado, sin ejecutar):
-
-- Código de proyecto presente en el export pero ausente de `proyectos:`. El mensaje incluye la línea YAML lista para pegar. El sangrado del bloque sugerido debe coincidir con el del archivo — 2 espacios para la clave, 4 para los campos: con 4 y 6, el bloque pegado queda anidado dentro de la entrada anterior, el YAML sigue siendo válido, la validación no lo detecta, y el mapeo se pierde en silencio. Hay tests de round-trip que lo cubren.
-
-  ```
-  Proyecto sin mapear en kimai-mzalazar.xlsx: [PR2610199] MINVU-Portal2
-    Agregá a config/mapeo.yaml, bajo proyectos:
-    PR2610199:
-      cliente: "Subsecretaría del Ministerio de Vivienda y Urbanismo de Chile"
-      proyecto: "MINVU-Portal2"   # ajustá el nombre para el partner
-  ```
-
-- Desarrollador presente en el export pero ausente de `personas:` (mismo tratamiento). Lo que llega puede ser el username (timesheet) o el nombre para mostrar (resumen mensual), y el bloque YAML sugerido se arma según cuál sea.
-- Resumen mensual cuyo total declarado no cierra con lo parseado.
-- Resumen mensual con encabezados de día ambiguos (no se puede decidir día/mes vs mes/día).
-- Archivo de input ilegible, de formato desconocido, o sin la estructura de columnas esperada.
-- Hora de inicio (`From`) que no tiene formato de hora: va en la celda de fecha del entregable, y mal leída movería el registro de día.
-
-**Avisa (el archivo se genera igual), en `output/<mes>/_validacion.txt`:**
-
-Agrupados por desarrollador:
-
-- Registros con fecha fuera del mes de la carpeta → se **excluyen** del archivo y se listan.
-- Más de 12 horas cargadas en un mismo día.
-- Horas cargadas en sábado o domingo.
-- Días hábiles del mes sin ninguna carga.
-
-Del mes entero:
-
-- **De qué reporte de Kimai salió cada desarrollador**, junto a sus registros y sus horas. Y, para los que vinieron del resumen mensual, el aviso explícito de que **sus filas van sin descripción y sin hora de inicio**, con la indicación de volver a exportar con el reporte de detalle si quiere ese dato. No frena nada: es información para decidir.
-- **Proyectos sin mapear**, con el nombre que se usó y el bloque YAML listo para pegar en `config/mapeo.yaml` si el dueño quiere otro.
-- **Personas que van sin usuario de Kimai en la hoja `Datos`**: las que exportaron con el resumen mensual y no están en `personas:`, o cuyo `nombre:` está declarado en dos entradas. El aviso las nombra, dice en qué archivo vinieron, trae el bloque YAML pegable y explica que C.UNIX pide que cada persona cargue sus horas con su propio usuario. No frena: sus filas y sus horas entran completas.
-- **Un mismo `Project number` con más de un nombre de proyecto en el mes**: significa que alguien renombró el proyecto en Kimai a mitad de mes y el partner vería dos nombres para lo mismo.
-- Los `.xlsx` que están en `output/<mes>/` y **esta corrida no generó** (los Excel del formato anterior, un consolidado marcado como INCOMPLETO de otra corrida, archivos del dueño). No se borran nunca, pero se nombran uno por uno: el dueño adjunta la carpeta, no la corrida.
-
-**Se eliminó** el aviso de desvío por redondeo: en este formato las duraciones van exactas y no hay nada que redondear. La sección «Precisión numérica» describe el formato anterior.
-
-## Precisión numérica
-
-**Esta sección describe el formato pivoteado, que quedó conservado sin ejecutarse.** En el detalle plano no hay redondeo de presentación: cada duración se escribe como `timedelta` exacto. Lo único que se redondea es el `float` que trae Kimai (1 h llega como `1.000000000000008`), y se redondea **a segundos**, una sola vez, en `detalle.segundos_de()`; tanto la celda escrita como la verificación de integridad parten de ese mismo número, así que la comparación es exacta por construcción y sólo puede fallar si se pierde o se duplica una fila.
-
-Las horas se acumulan como `float` sin redondear y se redondean a 2 decimales **una sola vez: en la celda de día de la fila de actividad**, que es el dato de base. Las horas de un mismo día que en Kimai vienen de actividades distintas se suman **antes** de ese redondeo, no después: por eso la colapsada de actividades vive en el agregador y no en el escritor. Colapsar en el escritor sumaría totales ya redondeados y agregaría un segundo redondeo (`1/3 + 1/3` daría `0.66` en vez de `0.67`), y el Excel podría dejar de cerrar. Todos los demás valores que se muestran —total de la actividad, celdas y total del proyecto, total del cliente, fila `Total` y totales por día— se derivan **sumando valores ya redondeados**.
-
-Este criterio reemplaza al anterior ("acumular sin redondear y redondear sólo al escribir"). Aquel suponía que redondear tarde garantizaba consistencia, y no la garantiza: cada celda se redondeaba por separado sobre una agregación distinta, así que con tercios de hora (20/40/50 minutos, muy comunes en Kimai) una fila mostraba `0.33` cinco veces y declaraba `1.67` de total. El total general era exacto, pero el Excel no cerraba a la vista y el cliente que suma una fila no obtenía el número declarado.
-
-El precio del criterio nuevo es que el total general puede apartarse de las horas reales del export. **El desvío no es "unos centésimos": escala con la cantidad de celdas.** Cada celda de día se redondea por separado y aporta hasta `0.005 h` de error, así que la cota del total es aproximadamente `0.005 h x (celdas de día no vacías)`. Un mes de 154 h repartido en muchas celdas ya muestra `153.72` en el Excel: **0.28 h de desvío**. Con 200 celdas la cota sube a 1 h.
-
-Es igual la elección correcta para un documento que el cliente lee y suma —un Excel cuyas filas no cierran a la vista es peor que un total corrido—, pero el desvío tiene que quedar a la vista del dueño.
-
-De eso se ocupa el aviso **"Desvío por redondeo"** del validador: compara el total del Excel (la suma de los valores redondeados, lo que el cliente ve) contra las horas crudas del export, y avisa si la diferencia supera **0.5 h**. Ese umbral es el punto en que la diferencia empieza a ser discutible en una factura; por debajo es ruido de presentación que no vale la pena poner delante del dueño todos los meses. El mensaje dice cuántas horas de diferencia hay y aclara que es efecto del redondeo y no un error de carga, para que el dueño decida si le importa.
-
-El aviso anterior comparaba valores redondeados contra valores redondeados: la misma cuenta dos veces, una tautología que no podía dispararse nunca. La red de seguridad que esta sección declaraba no existía.
-
-## Uso
-
-```
-python -m cunix_horas 2025-10
-```
-
-Y `generar.bat` en la raíz para ejecutarlo con doble clic.
-
-Salida en consola:
-
-```
-Procesando input/2025-10/ ...
-  kimai-fdodera.xlsx  ->  Franco Dodera  (33 registro/s, 128.00 h)
-  kimai-mzalazar.xlsx  ->  Matias Zalazar  (24 registro/s, 76.50 h)
-  Archivo para el partner: Horas KLG-Oct2025.xlsx  (57 fila/s, 204.50 h)
-2 export/s leído/s, 0 no leído/s, 4 aviso/s en output/2025-10/_validacion.txt
-```
-
-Un export que no se puede leer no frena a los demás: sale como
-`NO ENTRA AL ARCHIVO` con su motivo debajo, entra en la cuenta de la última
-línea, y el archivo del mes sale con la marca de INCOMPLETO en el nombre. Y si en
-`output/<mes>/` quedó algún `.xlsx` que esta corrida no generó, antes de esa
-línea sale el aviso correspondiente:
-
-```
-  OJO: en output/2025-10/ hay 1 .xlsx que esta corrida NO generó. No los envíes; están listados en el informe.
-```
-
-## Testing
-
-TDD. Fixtures reales en `tests/fixtures/`:
-
-- `20260924-kimai-export.xlsx` — export real de Kimai (24 registros, 3 proyectos, agosto 2026, 76.5 h) para el lector y el agregador.
-- `Oct Dodera.xlsx` — salida real del partner, como contrato **de estructura y estilos** del escritor.
-
-**Advertencia sobre este fixture:** el archivo está recortado. Su fila `Total` (fila 8) declara horas en días (`C8=4.0`, `H8=6.0`, `I8=5.0`) que no aparecen en ninguna fila de cliente/proyecto de arriba: le faltan clientes que sí existían en el original. Por lo tanto **no sirve como contrato de valores** — un test que verifique "los totales cierran" contra este archivo falla por culpa del fixture, no del código. Se usa para validar layout, estilos, merges y posiciones; los valores se prueban con datos sintéticos construidos en el test.
-
-Cobertura por módulo:
-
-- **lector_kimai:** parsea el fixture real; 24 registros; suma 76.5 h; rango 2026-08-03 a 2026-08-31; tolera el atributo `showZeroes`; resuelve tanto `sharedStrings` como `inlineStr`; convierte el serial de fecha correctamente.
-- **mapeo:** resuelve códigos y personas conocidas; devuelve `None` ante un código o una persona que no están, y ante un `nombre:` repetido en dos entradas, sin lanzar; la sección `personas:` entera es opcional.
-- **completado:** un registro de resumen mensual se completa con el usuario de Kimai del mapeo y sale con la descripción vacía y la fecha sin hora; si el mapeo no lo resuelve, el usuario sale vacío y con un aviso que nombra a la persona y trae el bloque YAML pegable, y el archivo entra igual; un registro de detalle sale con los valores de Kimai aunque el mapeo declare otros.
-- **agregador:** jerarquía correcta; totales por fila, por día y general; días sin horas quedan ausentes; dos registros del mismo día/proyecto se suman.
-- **validador:** dispara cada tipo de aviso con un caso mínimo.
-- **escritor_excel:** el archivo generado, releído, reproduce celda por celda la estructura de `Oct Dodera.xlsx`; negrita en filas de proyecto; merges de cliente; cantidad de columnas según los días del mes (probar febrero y un mes de 30).
-- **detalle:** passthrough de las ocho columnas; mapeo vs derivación de `Customer` y `Project`; cliente sin corchetes (`CUNIX`); `Project number` del campo propio y no del corchete (`210` contra `AD2690002`); orden agrupado por dev alfabético y cronológico dentro de cada uno; `Project number` con dos nombres.
-- **escritor_detalle:** el archivo generado, releído, tiene las diez columnas en orden, los encabezados en negrita con su relleno, los formatos de celda de `Date` (`yyyy-mm-dd`, conservando la hora) y `Duration` (`[hh]:mm`, `timedelta` y no número), los anchos y el autofiltro; la verificación de integridad detecta una fila perdida.
-- **cli (integración):** de `input/` a `output/`; un export roto no frena a los otros y el consolidado sale con el nombre que avisa que está incompleto; el informe dice quién falta y por qué; el limpio de una corrida anterior se aparta. **Punta a punta sobre los cinco exports reales de `input/2026-08/`**, verificando el total de horas del archivo generado contra la suma de los exports.
-
-## Decisiones tomadas y su razón
-
-| Decisión | Razón |
-|----------|-------|
-| Mapeo explícito en YAML en vez de derivar los nombres del texto de Kimai | Lo que ve el cliente no debe depender de cómo un dev tipeó el proyecto |
-| Match por código exacto, no difuso | Un match difuso imputa horas al cliente equivocado silenciosamente |
-| Un solo archivo por mes, detalle plano | Es lo que el partner pasó a pedir: factura sobre el detalle, no sobre el pivot |
-| El formato anterior queda en el repo sin ejecutarse | Si el partner vuelve atrás, se recupera sin reescribir; borrarlo no ahorra nada |
-| Con exports fallados el archivo se genera igual, pero marcado en el nombre | No generarlo deja al dueño sin nada; generarlo limpio le deja mandar un archivo incompleto sin saberlo |
-| Verificación de integridad que frena, no que avisa | Con todo en un archivo, una fila perdida no se ve a ojo: un aviso se leería tarde |
-| El mapeo pasa de obligatorio a opcional | Cada fila lleva su `Project number`: la trazabilidad no depende del mapeo, y frenar por un nombre cuesta un mes de atraso |
-| `Duration` como `timedelta` y no como número | El partner totaliza esa columna: con `[hh]:mm` da `160:30`, con número daría `160,5` |
-| La plantilla como fuente de estilos, no como archivo a mutar | Filas y columnas son variables; insertar filas en openpyxl rompe estilos |
-| Sin filtro de registros | Decisión del usuario: todo lo cargado en Kimai va al Excel |
-| Validaciones que avisan y no frenan | El usuario decide si envía o le reclama al dev; frenar agrega fricción |
-| Encabezados de día como texto | Como fechas reales, Excel podría mostrárselas distinto al partner según su configuración regional |
-| Parser XML propio para el input | openpyxl no puede abrir los exports de Kimai |
-
-## Fuera de alcance (posible trabajo futuro)
-
-- Integración directa con la API de Kimai (elimina el paso manual de exportar).
-- Comparación mes a mes / detección de desvíos.
-
-## Lo que quedó pendiente (2026-10-01)
-
-La limpieza de esta fecha tocó sólo lo que podía eliminarse sin cambiar lógica. Queda:
-
-1. **Los anexos no están especificados.** El entregable de hoy —`Anexo II` y `Anexo II-A`— lo genera `scripts/anexos_agosto_2026.py`, con los textos y los números de agosto de 2026 adentro. Las plantillas vacías ya están en `templates/`, pero nada del paquete `cunix_horas/` las conoce. Esta spec todavía describe el pipeline del consolidado plano.
-
-2. **`agregador.py` sigue vivo sin tener para qué.** Es la última pieza del pivot. No se eliminó porque `validador.py` importa de él los tipos `Reporte` y `Fila` para `validar()` y `dato_de_desvio()`, dos funciones que tampoco llama nadie. Eliminar las tres cosas —`agregador.py`, `tests/test_agregador.py`, y `validar()`/`dato_de_desvio()`/`_desvio_por_redondeo()` de `validador.py` con sus tests— es un solo movimiento, y requiere tocar `validador.py`.
-
-3. **El consolidado plano sigue siendo lo que corre `python -m cunix_horas`.** `detalle.py` y `escritor_detalle.py` están vivos y probados, pero C.UNIX ya no recibe ese archivo. Qué pasa con ellos se decide cuando los anexos entren a la herramienta.
-
-4. **Las fuentes manuales del mes** viven en `input/AAAA-MM/manual/`. Son los archivos que no salen de Kimai y sin los cuales el mes no se puede reproducir. De agosto de 2026 hay cuatro: las horas de Gabriel Denis, el detalle de Alexis Carnero, y los dos anexos tal como los mandó C.UNIX, que son la base que `scripts/anexos_agosto_2026.py` corrige (las plantillas vacías de `templates/` no sirven para eso: el script edita el ejemplo de C.UNIX, no arma un mes desde cero). El CLI no entra en esa subcarpeta: recorre `input/<mes>/*.xlsx` y `*.csv` con `glob`, que no es recursivo.
-
-5. **La plantilla del Anexo II-A arrastra dos datos de agosto de 2026**, los dos en partes que arma C.UNIX y que la limpieza dejó intactas a propósito: `Resumen!B5` tiene `306` fijo (es la celda «Horas en Kimai según C.UNIX», que él carga a mano, no una fórmula) y la hoja `Instrucciones` describe agosto como ejemplo. Hay que resolverlo antes de usar la plantilla para otro mes.
-
-6. **El párrafo «EJEMPLO: agosto 2026…»** quedó en la plantilla del Anexo II tal como lo mandó C.UNIX. Falta decidir si el generador lo borra.
+No es un bug de openpyxl: el archivo de Kimai está mal. Por eso **la lectura
+del input no usa openpyxl**: se descomprime el `.xlsx` como ZIP y se parsea
+`xl/worksheets/sheet1.xml` con `xml.etree.ElementTree`, resolviendo
+`xl/sharedStrings.xml` y las celdas `inlineStr`. Vale para los dos formatos
+`.xlsx` de entrada, así que ese parseo vive una sola vez, en `kimai_comun.py`.
+
+La **escritura** del output sí usa openpyxl: las plantillas son archivos
+normales.
+
+### 6.2 Las plantillas son fuente de estructura y nunca se mutan
+
+`templates/` tiene las dos plantillas vacías que mandó C.UNIX. De ellas salen
+la estructura, los estilos, las fórmulas, las listas desplegables y los valores
+hora. **Nunca se modifican**: se carga la plantilla y se guarda una copia en
+`output/<mes>/`.
+
+Dos motivos. Uno, que son el original de C.UNIX: si se corrompen, no hay de
+dónde sacar el formato otra vez. Dos, que la alternativa —mutar un archivo e
+ir corrigiéndolo— acumula el estado de todas las corridas anteriores, y una
+corrida tiene que depender sólo de sus datos.
+
+Dos cosas que openpyxl no hace solo y hay que arreglar después de guardar:
+
+- **el bloque `extLst`** de la hoja `Detalle` —las listas desplegables de
+  `Persona` y `Proyecto`—, que openpyxl no soporta y borra al guardar. Se
+  reinyecta sobre el `.xlsx` ya escrito, sacándole el `xr:uid`, que sin su
+  namespace deja el archivo sin abrir;
+- **la verificación de integridad** (§6.4).
+
+### 6.3 La escritura es atómica, y la herramienta nunca borra archivos del dueño
+
+Cada anexo se escribe primero en un temporal `~tmp-<pid>-<nombre>` **en la
+misma carpeta** que el destino (mover entre volúmenes no es atómico), y recién
+cuando salió entero se lo mueve sobre el nombre final con `os.replace`, que es
+atómico y pisa el destino. Así nunca queda un archivo a medio escribir con
+nombre de entregable, y una falla durante la generación no toca el que ya
+estaba. La verificación corre **sobre el temporal, antes del `os.replace`**:
+lo que no cierra no llega a ocupar el nombre bueno.
+
+Y la herramienta **no borra nada**. Si el anexo del mes sale marcado como
+INCOMPLETO y en la carpeta había uno limpio de una corrida anterior, se lo
+**renombra** a `… (CORRIDA ANTERIOR - NO ENVIAR).xlsx`: el nombre ya no
+engaña, pero el dato sigue estando. Lo que el dueño puso en su carpeta es
+suyo; lo único que la herramienta se permite es que no se haga pasar por lo de
+hoy.
+
+### 6.4 La verificación de integridad frena, no avisa
+
+Después de escribir el Anexo II-A se lo **vuelve a abrir** y se suma la columna
+`Horas`. Si el total no coincide con las horas de los exports que se leyeron,
+**no se genera el archivo**.
+
+Con ochenta filas de seis personas en una sola hoja, una fila perdida no se ve
+nunca a ojo, y el archivo se vería completo sin serlo. Un aviso se leería
+tarde. Es lo único que separa un entregable correcto de uno creíble y
+equivocado.
+
+### 6.5 El informe de validación describe **la carpeta**, no la corrida
+
+**Esta distinción costó tres rondas de arreglos.** Cada vez que el informe
+describía lo que había hecho la corrida, quedaba en `output/<mes>/` un archivo
+viejo —un anexo de hace tres corridas, uno de un formato anterior, algo que el
+dueño dejó a mano— del que nadie avisaba, y el dueño adjuntaba la carpeta.
+
+El dueño no envía lo que hizo el programa: **envía lo que hay en
+`output/<mes>/`**. Por eso el informe recorre la carpeta y nombra uno por uno
+todo `.xlsx` y `.docx` que esta corrida no haya generado, separando los que
+apartó la herramienta de los que ya estaban. Y por eso `_validacion.txt`
+termina diciendo que si se mueven o agregan archivos *después* de correr, el
+informe ya no corresponde y hay que volver a correr.
+
+Del mismo principio sale el resto:
+
+- si `_validacion.txt` no se puede escribir (lo más común: está abierto en el
+  Bloc de notas), el que quedó en disco es de otra corrida y **describe otra
+  cosa**. El de ésta se escribe en
+  `_validacion (NO SE PUDO ESCRIBIR _validacion.txt - LEER ESTE).txt`, se avisa
+  en consola y la corrida termina con error;
+- cuando no hay ningún aviso pero sí archivos ajenos o gente que faltó, el
+  informe **nunca dice «Sin avisos.» a secas**: sería el mensaje más
+  tranquilizador posible al lado de un envío incompleto;
+- los archivos ajenos **no** cambian el código de salida: que la carpeta tenga
+  archivos de más no significa que la corrida haya fallado, y un código 1
+  recurrente enseñaría a ignorar el código de salida, que es lo que distingue
+  una corrida incompleta de una completa.
+
+### 6.6 Qué frena una entrega y qué sólo avisa
+
+El criterio es uno solo: **frena lo que haría salir mal el entregable; avisa
+todo lo que el dueño puede mirar y decidir.**
+
+**Frena la corrida entera** (no se genera ningún anexo):
+
+- una fuente manual que falta, o cuyas horas no cierran contra la persona a la
+  que se le restan (un día negativo, o un día que la otra persona no tiene).
+  Esas planillas **mueven horas de una persona a otra**: un reparto que no
+  cuadra se factura mal y no se ve en una hoja de ochenta filas;
+- `config/mapeo.yaml` roto, o con un campo declarado en blanco;
+- que falte una plantilla, o que no exista `input/<mes>/`.
+
+**Frena ese anexo** (el otro se genera igual, y la entrega queda incompleta):
+
+- la verificación de integridad no cierra (§6.4);
+- el mes no entra en la plantilla;
+- el archivo está abierto y no se puede escribir;
+- la plantilla no tiene la forma que el escritor espera.
+
+**Deja a ese desarrollador afuera** (los demás entran, y los anexos salen
+marcados como INCOMPLETO en el nombre):
+
+- export ilegible, de formato desconocido o con las columnas corridas;
+- export sin ninguna fila de datos, o con todas sus filas fuera del mes: las
+  dos cosas suelen ser el rango de fechas mal puesto en Kimai, y el error lo
+  dice;
+- hora de inicio que no tiene formato de hora;
+- proyecto sin código entre corchetes.
+
+**Sólo avisa** en `_validacion.txt`, y la entrega sale igual:
+
+- una persona del resumen mensual que no está en `personas:`, o cuyo `nombre:`
+  está declarado en dos entradas → usuario de Kimai vacío;
+- un proyecto que no está en `proyectos:` → sale con el nombre de Kimai;
+- un proyecto sin valor hora → sale con sus horas y sin importe;
+- registros sin descripción, por persona y con la cantidad;
+- filas que van sin descripción y sin horario por venir del resumen mensual;
+- días hábiles sin carga, horas en fin de semana, más de 12 h en un día,
+  registros fuera del mes.
+
+**Lo que dejó de frenar, y por qué.** Un proyecto sin mapear frenaba: ahora el
+nombre se deriva del texto de Kimai, y frenar una entrega por un nombre cuesta
+un mes de atraso. Una persona sin declarar frenaba: lo único que el mapeo le
+aportaba era el usuario de Kimai, y su ausencia produce **una celda vacía** en
+la hoja `Datos` que ya es un valor legítimo del entregable —hay gente que
+realmente no tiene usuario—. Un export con horas de dos personas frenaba: el
+chequeo existía para que el Excel pivoteado no le imputara todo a una sola
+persona, y hoy cada fila lleva su propio nombre, así que frenar dejaría afuera
+a **dos** desarrolladores en vez de incluirlos bien.
+
+### 6.7 Si falta un desarrollador, se ve en el nombre del archivo
+
+Éste es el riesgo del entregable: con todas las personas adentro de dos
+documentos, **una que falta es invisible**. Nada en el Word ni en el Excel se
+ve distinto.
+
+Por eso, cuando algún export falla, los anexos **se generan igual** con lo que
+sí se pudo leer —no generarlos dejaría al dueño sin nada que revisar— pero
+salen con la marca en el **nombre**:
+`Anexo-II-A-Detalle-horas-KLG-2026-09 (INCOMPLETO - FALTAN 2 DESARROLLADORES - NO ENVIAR).xlsx`.
+El nombre es lo único que se ve al adjuntar un archivo a un mail.
+
+La marca la decide **sólo lo que no entró de `input/`**, nunca una falla de
+escritura posterior: si no, el nombre del segundo anexo dependería del orden en
+que se generan.
+
+### 6.8 La tabla 3 sale como borrador mecánico, a propósito
+
+La tabla de principales trabajos se agrupa por proyecto y por el ticket que
+cita cada descripción (iTop `R-012532`, ClickUp `CU-8xyz`, y los `BUG-` que el
+equipo usó en agosto), con las horas sumadas y las descripciones concatenadas.
+
+**La aritmética está garantizada:** cada fila del mes cae en exactamente un
+grupo, así que los subtotales cierran exactos y el total da el total del mes.
+El dueño puede reescribir los textos y fusionar líneas sumando sus horas sin
+que deje de cuadrar.
+
+**La redacción no se automatiza.** La tabla que C.UNIX armó para agosto de 2026
+estaba agrupada **por tema**, leyendo las descripciones una por una: partió las
+45,5 h «sin ticket» en tres líneas temáticas, fusionó tres tickets en una sola
+línea, y le sumó a un ticket trabajo relacionado que no lo citaba. Saber qué
+trabajos cuentan la misma historia es criterio editorial, no cálculo, y
+automatizarlo sería inventar.
+
+Por el mismo motivo la columna «Estado al cierre» y las observaciones de la
+tabla 4 quedan con la marca `[●]` que trae la plantilla: **un hueco visible es
+preferible a un dato inventado**, y todo lo que queda con `[●]` o
+`[DD/MM/AAAA]` es exactamente lo que falta completar.
+
+### 6.9 Un export que falla no frena a los demás
+
+Cada archivo de `input/` se procesa aislado. El que falla se registra con su
+motivo —en consola y en el informe— y los otros siguen. Frenar todo por un
+archivo roto obligaría a arreglarlo antes de poder mirar nada, y el dueño
+cierra el mes contra reloj.
+
+### 6.10 Las horas van exactas, sin redondeo de presentación
+
+Los anexos escriben las horas tal como vienen: no hay celdas de día que
+redondear. Por eso el aviso de «desvío por redondeo» que existía en el
+validador se eliminó junto con el Excel pivoteado por desarrollador, que era el
+único formato que redondeaba cada celda por separado. Lo único que se redondea
+es la presentación de los totales en el informe (un decimal), y con medio hacia
+arriba.
+
+### 6.11 `scripts/anexos_agosto_2026.py` es historia, no camino normal
+
+Agosto de 2026 se entregó **corrigiendo el ejemplo que mandó C.UNIX**, no
+armándolo desde cero: la herramienta todavía no generaba los anexos. Ese script
+es el registro auditable de esa corrección y lo único que reproduce lo
+entregado tal cual. Está versionado para poder auditarlo, no para usarlo: de
+septiembre en adelante el camino es `python -m cunix_horas AAAA-MM`.
+
+Las cuatro planillas de `input/2026-08/manual/` son la **única copia** de esos
+datos —las horas de Gabriel Denis, el detalle de Alexis Carnero y los dos
+anexos tal como los mandó C.UNIX—: sin ellas, agosto de 2026 no se puede volver
+a generar.
+
+---
+
+## 7. Qué se eliminó, y por qué
+
+El proyecto pasó por **tres generaciones de entregables**, porque el cliente
+cambió dos veces lo que quería recibir. Hoy sólo vive la tercera. Si el
+historial de git muestra módulos que ya no están, es por esto:
+
+1. **Un Excel pivoteado por desarrollador** (cliente → proyecto → actividad, un
+   día por columna, un archivo por persona). C.UNIX pasó a facturar sobre el
+   detalle y no sobre el pivot: quería ver cada carga de horas con su hora de
+   inicio y su descripción. Se eliminaron `agregador.py`, `escritor_excel.py`,
+   la plantilla de estilos, el fixture de salida del formato viejo y sus tests.
+2. **Un archivo plano consolidado** con todos los devs
+   (`Horas KLG-<Mes><Año>.xlsx`), con columnas `E-mail` y `Project number`.
+   C.UNIX definió sus propios anexos y dejó de recibirlo. Se eliminaron
+   `detalle.py`, `escritor_detalle.py` y sus tests.
+3. **Los dos anexos de C.UNIX.** Es lo único que se genera hoy.
+
+De las dos primeras generaciones **sobrevive la lectura**: los exports de Kimai
+no cambiaron, así que `lector_*.py`, `kimai_comun.py`, `completado.py` y
+`validador.py` siguen igual.
+
+De ahí salen también los campos del mapeo que ya no existen: `mail:`,
+`numero_proyecto:`, `archivo:`, `actividad:` y `archivo_salida:` servían al
+archivo plano o al pivot, y los dos primeros **frenaban la entrega entera** si
+faltaban. Era un programa que podía trabar un mes exigiendo un dato que después
+no escribía en ningún lado. Se eliminaron con su validación; si quedaron en un
+`mapeo.yaml` viejo, se ignoran al cargar.
+
+`Registro` sigue teniendo `email` y `numero_proyecto` porque son datos que el
+export de Kimai trae: se leen, no se exigen, y hoy no se escriben en ningún
+lado.
+
+---
+
+## 8. Testing
+
+TDD, con `pytest`, sobre fixtures reales. `python -m pytest -q`.
+
+- **Los lectores**, contra exports reales de los tres formatos: cantidad de
+  registros, suma de horas, rango de fechas, tolerancia al `showZeroes`,
+  `sharedStrings` e `inlineStr`, serial de fecha, duración, separador decimal y
+  orden de la fecha.
+- **`mapeo`**: resuelve códigos y personas; devuelve `None` —sin lanzar— ante
+  lo que no está y ante un `nombre:` repetido; cada sección es opcional; los
+  patrones de nombre se validan al cargar.
+- **`completado`**: un registro del resumen mensual sale con el usuario del
+  mapeo, o vacío con aviso; uno del detalle sale con los valores de Kimai
+  aunque el mapeo diga otra cosa.
+- **`filas_anexo`**: `Fin = Inicio + Horas`, incluido el cruce de medianoche;
+  orden de la hoja; las tres tablas del informe; que los subtotales de la
+  tabla 3 cierren contra el total del mes.
+- **`fuentes_manuales`**: la resta día por día, sus casos de error, la lectura
+  tolerante de encabezados y fechas, y la carga de descripciones con su
+  verificación.
+- **Los escritores**: el archivo generado, releído, tiene lo que corresponde y
+  no tocó lo que es de C.UNIX; la verificación de integridad detecta una fila
+  perdida; la plantilla no quedó modificada.
+- **`cli` (integración)**: de `input/` a `output/`; un export roto no frena a
+  los otros y los anexos salen con el nombre que avisa; el informe dice quién
+  falta y por qué; el limpio de una corrida anterior se aparta y no se borra;
+  los archivos ajenos se listan. **Punta a punta sobre los cinco exports reales
+  de `input/2026-08/`**, verificando el total contra la suma de los exports.
+
+---
+
+## 9. Lo que queda pendiente
+
+1. **La plantilla del Anexo II-A arrastra dos datos de agosto de 2026**, los dos
+   en partes que arma C.UNIX y que se dejaron intactas a propósito:
+   `Resumen!B5` tiene `306` fijo (es la celda «Horas en Kimai según C.UNIX»,
+   que él carga a mano, no una fórmula) y la hoja `Instrucciones` describe
+   agosto como ejemplo. Hay que resolverlo con C.UNIX antes de que confunda a
+   alguien.
+2. **`contrato_de_fecha` sigue sin confirmarse** contra el contrato, así que el
+   informe sale todos los meses con `[DD/MM/AAAA]` a la vista.
+
+## 10. Fuera de alcance (posible trabajo futuro)
+
+- Integración directa con la API de Kimai, que eliminaría el paso manual de
+  exportar uno por uno.
+- Comparación mes a mes y detección de desvíos.
