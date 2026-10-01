@@ -12,22 +12,17 @@ actividad: "Desarrollo"
 personas:
   franco:
     nombre: "Franco Dodera"
-    archivo: "Dodera"
   mzalazar:
     nombre: "Matias Zalazar"
-    archivo: "M Zalazar"
   lcarducci:
     nombre: "Luciano Carducci"
-    archivo: "Carducci"
   lzalazar:
     nombre: "Lautaro Zalazar"
-    archivo: "L Zalazar"
     mail: "lautaro.zalazar@cunix.net"
   # INVENTADO: el username y el mail reales de Alexis los tiene que pasar el
   # dueño. Acá alcanza con que existan, para probar que el archivo entra.
   acarnero-de-prueba:
     nombre: "Alexis Carnero"
-    archivo: "Carnero"
     mail: "alexis.carnero@ejemplo-de-prueba.invalid"
 
 proyectos:

@@ -16,7 +16,6 @@ CUERPO_MINIMO = """
 personas:
   mzalazar:
     nombre: "Matias Zalazar"
-    archivo: "Zalazar"
 proyectos:
   CO2610170:
     cliente: "Servicio Nacional de Aduanas"
@@ -39,7 +38,7 @@ def test_proyecto_conserva_acentos():
 def test_persona_conocida():
     persona = cargar().persona_opcional("mzalazar")
     assert persona.nombre == "Matias Zalazar"
-    assert persona.archivo == "Zalazar"
+    assert persona.username == "mzalazar"
 
 
 def test_un_proyecto_desconocido_no_frena_la_busqueda():
@@ -100,7 +99,7 @@ def _mapeo_con(personas: str, tmp_path):
 def test_resolver_persona_por_el_nombre_para_mostrar():
     """El resumen mensual identifica al dev por el 'nombre:' del mapeo."""
     persona = cargar().persona_opcional("Matias Zalazar")
-    assert persona.archivo == "Zalazar"
+    assert persona.username == "mzalazar"
 
 
 def test_el_username_gana_sobre_el_nombre(tmp_path):
@@ -108,28 +107,24 @@ def test_el_username_gana_sobre_el_nombre(tmp_path):
     mapeo = _mapeo_con(
         "  mzalazar:\n"
         '    nombre: "Matias Zalazar"\n'
-        '    archivo: "Zalazar"\n'
         "  Matias Zalazar:\n"
-        '    nombre: "Otro Dev"\n'
-        '    archivo: "Otro"\n',
+        '    nombre: "Otro Dev"\n',
         tmp_path,
     )
-    assert mapeo.persona_opcional("Matias Zalazar").archivo == "Otro"
+    assert mapeo.persona_opcional("Matias Zalazar").nombre == "Otro Dev"
 
 
 def test_el_nombre_se_compara_sin_importar_espacios_ni_mayusculas():
     persona = cargar().persona_opcional("  matias   zalazar ")
-    assert persona.archivo == "Zalazar"
+    assert persona.username == "mzalazar"
 
 
 def test_dos_personas_con_el_mismo_nombre_no_eligen_una(tmp_path):
     mapeo = _mapeo_con(
         "  mzalazar:\n"
         '    nombre: "Matias Zalazar"\n'
-        '    archivo: "Zalazar"\n'
         "  mzalazar2:\n"
-        '    nombre: "Matias Zalazar"\n'
-        '    archivo: "Zalazar M"\n',
+        '    nombre: "Matias Zalazar"\n',
         tmp_path,
     )
     # No elige ninguna, y tampoco frena: quien llama avisa con los dos
@@ -307,3 +302,21 @@ def test_el_mapeo_del_repo_declara_las_horas_de_quien_no_tiene_usuario():
     mapeo = Mapeo.cargar(RAIZ / "config" / "mapeo.yaml")
     personas = [e.persona for e in mapeo.fuentes_manuales.horas_sin_kimai]
     assert "Gabriel Denis" in personas
+
+
+def test_un_mapeo_viejo_con_archivo_se_carga_y_se_ignora(tmp_path):
+    """`archivo:` era el apellido del Excel por desarrollador: ya no existe."""
+    mapeo = _mapeo_con(
+        "  mzalazar:\n"
+        '    nombre: "Matias Zalazar"\n'
+        '    archivo: "Zalazar"\n',
+        tmp_path,
+    )
+    persona = mapeo.persona_opcional("mzalazar")
+    assert persona.nombre == "Matias Zalazar"
+    assert not hasattr(persona, "archivo")
+
+
+def test_el_unico_campo_obligatorio_de_una_persona_es_el_nombre(tmp_path):
+    with pytest.raises(ErrorMapeo, match="'nombre:'"):
+        _mapeo_con('  mzalazar:\n    archivo: "Zalazar"\n', tmp_path)

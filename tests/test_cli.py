@@ -461,7 +461,7 @@ def test_las_tablas_del_informe_cierran_con_el_total_del_mes(tmp_path):
 
 MAPEO_DE_LAUTARO = (
     "personas:\n  lzalazar:\n"
-    '    nombre: "Lautaro Zalazar"\n    archivo: "L Zalazar"\n'
+    '    nombre: "Lautaro Zalazar"\n'
     "proyectos:\n  GI2680001:\n"
     '    cliente: "C.UNIX"\n    proyecto: "Victorius 3"\n'
 )
@@ -568,7 +568,7 @@ def planilla_manual(raiz, filas):
 
 MAPEO_CON_FUENTE = (
     "personas:\n  mzalazar:\n"
-    '    nombre: "Matias Zalazar"\n    archivo: "Zalazar"\n'
+    '    nombre: "Matias Zalazar"\n'
     "proyectos:\n  CO2510115:\n"
     '    cliente: "ISP"\n    proyecto: "SIAC-OIRS"\n'
     "fuentes_manuales:\n  horas_sin_kimai:\n"

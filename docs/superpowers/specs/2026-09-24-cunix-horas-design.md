@@ -270,7 +270,7 @@ Reglas:
 - Fila final `Total`: total general en `B`, y total por día en cada columna, **incluyendo `0.0`** en los días sin horas (así está en la plantilla).
 - Merge de `C:AG` en cada fila de cliente (en la plantilla: `C2:AG2`, `C5:AG5`).
 
-Nombre de archivo: `<Mes> <archivo>.xlsx` — mes abreviado en inglés con inicial mayúscula (`Oct`) y `personas.<username>.archivo` (`Dodera`) → `Oct Dodera.xlsx`.
+Nombre de archivo (formato anterior, ya no se genera): `<Mes> <apellido>.xlsx`, p. ej. `Oct Dodera.xlsx`. El apellido salía de un campo `archivo:` de `personas:` que se eliminó.
 
 ### Estilos
 
@@ -296,8 +296,8 @@ archivo_salida: "Horas KLG-{mes}{anio}.xlsx"
 actividad: "Desarrollo"
 
 personas:   # opcional entera; sin ella nadie frena
-  mzalazar:  { nombre: "Matias Zalazar", archivo: "Zalazar" }
-  lzalazar:  { nombre: "Lautaro Zalazar", archivo: "L Zalazar" }
+  mzalazar:  { nombre: "Matias Zalazar" }
+  lzalazar:  { nombre: "Lautaro Zalazar" }
 
 proyectos:
   CO2610170: { cliente: "Servicio Nacional de Aduanas", proyecto: "Subastas" }
@@ -307,6 +307,7 @@ proyectos:
 - `archivo_salida:` es el nombre del único archivo que recibe el partner. `{mes}` sale de la tabla fija de meses del proyecto (`Jan`…`Dec`) y `{anio}` es el año de cuatro dígitos; agosto de 2026 da `Horas KLG-Aug2026.xlsx`. Es opcional. El archivo de referencia del partner usa `Sept` para septiembre: si se quiere esa forma exacta, o meses en español, se escribe el mes a mano en el patrón, a costa de tener que actualizar la línea cada mes. Se valida al cargar el mapeo —antes de leer ningún export— que el patrón no use reemplazos inventados y que termine en `.xlsx`.
 - **`personas:` es opcional para quien exporta con el reporte de detalle.** Ese export trae el nombre y el usuario de cada desarrollador, y el mapeo no interviene. Si la sección no está, el mapeo carga igual.
 - **`personas:` le aporta al resumen mensual una sola cosa: el usuario de Kimai** de la columna «Usuario Kimai» de la hoja `Datos`, que es la clave de la entrada. La persona se resuelve por su `nombre:`. Si no está declarada, o si dos entradas comparten el `nombre:`, **no frena nada**: el usuario queda vacío y `_validacion.txt` lo avisa con el bloque YAML pegable.
+- **El único campo de cada persona es `nombre:`.** Ya no existe `archivo:` (el apellido del Excel por desarrollador del entregable anterior): no se escribía en ningún lado. Si un `mapeo.yaml` viejo lo trae, se ignora.
 - **No hay `mail:` ni `numero_proyecto:`.** Ninguno de los dos anexos tiene esas columnas. Eran campos del entregable anterior y su ausencia frenaba el archivo: exigían un dato que después no se escribía en ningún lado. Se eliminaron junto con su validación; si quedaron escritos en un `mapeo.yaml` viejo, se ignoran.
 - **Cada entrada de `proyectos:` es opcional también.** Un proyecto sin declarar **ya no frena nada**: sale con el nombre derivado de Kimai y queda listado en `_validacion.txt` con el bloque listo para pegar. El mapeo pasó de ser obligatorio a ser un pulido opcional de nombres.
 - La clave de `proyectos` es el código entre corchetes de la columna J (`[CO2610170]` → `CO2610170`). **Match exacto**, nunca por similitud de texto: el código es estable aunque se renombre el proyecto en Kimai, y un match difuso podría imputar horas al cliente equivocado sin que nadie lo note.
@@ -338,7 +339,7 @@ Módulos en `cunix_horas/` (paquete en la raíz del proyecto, no bajo `src/`: as
 | `lector_timesheet_csv.py` | Timesheet `.csv` → `list[Registro]`. Fecha ISO, duración `H:MM`, columnas por nombre. | `kimai_comun` |
 | `lector_resumen_mensual.py` | Resumen mensual `.xlsx` → `list[Registro]` marcados con `origen`. Verifica contra el total declarado. | `kimai_comun` |
 | `completado.py` | Les pone a los registros del resumen mensual el usuario de Kimai que declara el mapeo; si el mapeo no lo resuelve, lo deja vacío y devuelve un aviso con el YAML pegable. No frena nunca. Los del detalle pasan intactos. | `mapeo` |
-| `mapeo.py` | Carga y valida el YAML. Resuelve código → (cliente, proyecto). Resuelve username *o* nombre para mostrar → (nombre, archivo, username), o `None` si no hay una sola persona que corresponda. | — |
+| `mapeo.py` | Carga y valida el YAML. Resuelve código → (cliente, proyecto). Resuelve username *o* nombre para mostrar → (nombre, username), o `None` si no hay una sola persona que corresponda. | — |
 | `detalle.py` | `list[Registro]` + mapeo → `Detalle`: una `FilaDetalle` por registro, ordenadas, más los proyectos sin mapear y los `Project number` ambiguos. | `mapeo` |
 | `escritor_detalle.py` | `Detalle` → el `.xlsx` del partner. Incluye la verificación de integridad, que **relee** el archivo escrito. | openpyxl |
 | `agregador.py` | **Sin ejecutar, pendiente de eliminar.** `list[Registro]` + mapeo → `Reporte` con jerarquía y totales. Sobrevive sólo porque `validador.validar()` usa sus tipos. | `mapeo` |

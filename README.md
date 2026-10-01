@@ -203,11 +203,23 @@ pegar.
 
 La sección `personas:` sólo hace falta para quien exporta con el **resumen
 mensual**, que no trae el usuario: ahí la persona se resuelve por su `nombre:`,
-que tiene que coincidir exactamente con lo que muestra Kimai. Si no está
+que tiene que coincidir exactamente con lo que muestra Kimai. Cada persona
+lleva un solo dato, `nombre:`, y su clave es el usuario de Kimai:
+
+```yaml
+personas:
+  acarnero:                        # el usuario de Kimai
+    nombre: "Alexis Carnero"       # exacto como lo muestra Kimai
+```
+
+Si no está
 declarada, **tampoco frena nada**: esa persona entra con todas sus horas y la
 columna «Usuario Kimai» de la hoja `Datos` le queda vacía, igual que a quien
 todavía no tiene usuario. `_validacion.txt` la nombra y explica que C.UNIX
 pide que cada uno cargue sus horas con su propio usuario.
+
+Las personas tampoco llevan `archivo:` (el apellido con que se nombraba el
+Excel de cada desarrollador): ya no se genera ese archivo.
 
 Ni las personas ni los proyectos llevan `mail:` o `numero_proyecto:`. Esos dos
 campos existían para un entregable anterior, que era un archivo plano con
@@ -216,7 +228,7 @@ columnas** —el Anexo II-A va `Fecha | Inicio | Fin | Persona | Proyecto |
 Descripción | Horas | Alertas | Revisión C.UNIX | Horas aprobadas | Horas a
 pagar | Observación C.UNIX | Día nuevo | Nota KLG`—, así que pedirlos sólo
 servía para trabar una entrega por un dato que después no se escribía en
-ningún lado. Si te quedaron esas líneas en tu `mapeo.yaml` viejo, se ignoran;
+ningún lado. Si te quedaron esas líneas, o `archivo:`, en tu `mapeo.yaml` viejo, se ignoran;
 podés borrarlas.
 
 ## Qué frena una entrega y qué sólo se avisa

@@ -25,16 +25,12 @@ actividad: "Desarrollo"
 personas:
   franco:
     nombre: "Franco Dodera"
-    archivo: "Dodera"
   mzalazar:
     nombre: "Matias Zalazar"
-    archivo: "M Zalazar"
   lcarducci:
     nombre: "Luciano Carducci"
-    archivo: "Carducci"
   lzalazar:
     nombre: "Lautaro Zalazar"
-    archivo: "L Zalazar"
     mail: "lautaro.zalazar@ejemplo-de-prueba.invalid"
   # FALTA A PROPÓSITO: Alexis Carnero no está declarada. Exportó con el
   # resumen mensual, así que sin esta entrada no hay `User` ni `E-mail` y su

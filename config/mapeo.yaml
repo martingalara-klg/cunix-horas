@@ -97,24 +97,19 @@ fuentes_manuales:
 personas:
   franco:
     nombre: "Franco Dodera"
-    archivo: "Dodera"
   mzalazar:
     nombre: "Matias Zalazar"
-    archivo: "M Zalazar"
   lcarducci:
     nombre: "Luciano Carducci"
-    archivo: "Carducci"
   # Lautaro exporto con el reporte de resumen mensual, que no trae el
   # username. Se resuelve por `nombre`, y su usuario es la clave de abajo.
   lzalazar:
     nombre: "Lautaro Zalazar"
-    archivo: "L Zalazar"
 
   # Alexis tambien exporto con el resumen mensual. Usuario confirmado por el
   # dueno el 2026-09-28.
   acarnero:
     nombre: "Alexis Carnero"
-    archivo: "Carnero"
 
 proyectos:
   CO2610170:

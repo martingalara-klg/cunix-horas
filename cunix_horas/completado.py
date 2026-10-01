@@ -87,7 +87,6 @@ def _aviso_de_persona_sin_mapear(nombre_dev: str, archivo: str) -> str:
         f"usando como clave su usuario de Kimai:\n"
         f"  AJUSTAR-username-de-kimai:\n"
         f'    nombre: "{nombre_dev}"\n'
-        f'    archivo: "AJUSTAR - apellido, va en el nombre del archivo"\n'
         + _SALIDA_POR_EL_DETALLE
         + "\n"
         + _CIERRE

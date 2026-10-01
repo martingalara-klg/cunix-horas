@@ -48,10 +48,11 @@ class Persona:
 
     No hay `mail:`. Ninguno de los dos anexos tiene columna de mail, así que
     el mapeo no guarda un dato que después no se escribe en ningún lado.
+    Tampoco hay `archivo:` (el apellido del Excel por desarrollador del
+    entregable anterior): si un `mapeo.yaml` viejo lo trae, se ignora.
     """
 
     nombre: str
-    archivo: str
     # La clave de `personas:`, que ES el usuario de Kimai que ve C.UNIX en la
     # hoja `Datos`. Viaja adentro de la Persona para que quien la resuelve por
     # `nombre` no tenga que volver a buscar cuál era su clave.
@@ -282,14 +283,11 @@ class Mapeo:
 
         personas: dict[str, Persona] = {}
         for username, datos in (contenido.get("personas") or {}).items():
-            for campo in ("nombre", "archivo"):
-                if campo not in (datos or {}):
-                    raise ErrorMapeo(
-                        f"A la persona '{username}' en {ruta} le falta '{campo}:'"
-                    )
-            personas[username] = Persona(
-                datos["nombre"], datos["archivo"], username
-            )
+            if "nombre" not in (datos or {}):
+                raise ErrorMapeo(
+                    f"A la persona '{username}' en {ruta} le falta 'nombre:'"
+                )
+            personas[username] = Persona(datos["nombre"], username)
 
         proyectos: dict[str, DestinoProyecto] = {}
         for codigo, datos in (contenido["proyectos"] or {}).items():

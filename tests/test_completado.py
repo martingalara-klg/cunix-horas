@@ -28,7 +28,6 @@ ARCHIVO = "lautaro.xlsx"
 
 PERSONA = Persona(
     nombre="Lautaro Zalazar",
-    archivo="L Zalazar",
     username="lzalazar",
 )
 
@@ -145,7 +144,7 @@ def test_el_aviso_trae_el_bloque_yaml_pegable():
     )
     entrada = datos["AJUSTAR-username-de-kimai"]
     assert entrada["nombre"] == "Alexis Carnero"
-    assert "archivo" in entrada
+    assert set(entrada) == {"nombre"}
     # El mail ya no se pide: no hay columna donde escribirlo.
     assert "mail" not in entrada
 
@@ -169,8 +168,8 @@ def test_avisa_una_sola_vez_por_persona_aunque_tenga_muchos_registros():
 
 def test_dos_personas_con_el_mismo_nombre_avisan_en_vez_de_frenar():
     repetidas = (
-        Persona("Lautaro Zalazar", "L Zalazar", "lzalazar"),
-        Persona("Lautaro Zalazar", "Zalazar L", "lzalazar2"),
+        Persona("Lautaro Zalazar", "lzalazar"),
+        Persona("Lautaro Zalazar", "lzalazar2"),
     )
     completado = completar_desde_mapeo(
         [del_resumen()], mapeo(personas=repetidas), ARCHIVO
